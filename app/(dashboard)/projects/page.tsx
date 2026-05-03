@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Plus, Search, Filter, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
@@ -61,11 +61,7 @@ export default function ProjectsPage() {
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
   const [showNewProject, setShowNewProject] = useState(false)
 
-  useEffect(() => {
-    fetchProjects()
-  }, [statusFilter])
-
-  async function fetchProjects() {
+  const fetchProjects = useCallback(async () => {
     try {
       const params = new URLSearchParams()
       if (statusFilter) params.set('status', statusFilter)
@@ -77,7 +73,11 @@ export default function ProjectsPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [statusFilter])
+
+  useEffect(() => {
+    fetchProjects()
+  }, [fetchProjects])
 
   const filtered = projects.filter(p =>
     !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.code.toLowerCase().includes(search.toLowerCase())
