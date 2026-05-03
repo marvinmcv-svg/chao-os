@@ -82,6 +82,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         data: admins.map(admin => ({
           userId: admin.id,
           type: 'OVERDUE_INVOICE',
+          title: `Factura ${invoice.number} vencida`,
           message: `Factura ${invoice.number} vencida — ${invoice.amountUSD} USD`,
           data: { invoiceId: invoice.id, amount: invoice.amountUSD },
         })),
