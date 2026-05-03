@@ -61,7 +61,7 @@ export const CreateClientSchema = z.object({
   name: z.string().min(1, 'Nombre requerido'),
   company: z.string().min(1, 'Empresa requerida'),
   email: z.string().email('Email inválido'),
-  phone: z.string().optional(),
+  phone: z.string().default(''),
   type: z.enum(['ACTIVE', 'PROSPECT', 'PAST']).default('PROSPECT'),
   notes: z.string().optional(),
 })
