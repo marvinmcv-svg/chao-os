@@ -51,11 +51,7 @@ export function KanbanBoard({ onCardClick, onNewLead, refreshTrigger }: Props) {
   const [draggedLead, setDraggedLead] = useState<Lead | null>(null)
   const [dragOverStage, setDragOverStage] = useState<string | null>(null)
 
-  useEffect(() => {
-    fetchLeads()
-  }, [refreshTrigger])
-
-  async function fetchLeads() {
+  const fetchLeads = useCallback(async () => {
     try {
       const res = await fetch('/api/leads')
       const json = await res.json()
@@ -65,9 +61,13 @@ export function KanbanBoard({ onCardClick, onNewLead, refreshTrigger }: Props) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
-  async function moveToStage(leadId: string, newStage: string, newSortOrder: number) {
+  useEffect(() => {
+    fetchLeads()
+  }, [fetchLeads, refreshTrigger])
+
+  const moveToStage = useCallback(async (leadId: string, newStage: string, newSortOrder: number) => {
     try {
       const res = await fetch(`/api/leads/${leadId}/stage`, {
         method: 'PATCH',
@@ -82,7 +82,7 @@ export function KanbanBoard({ onCardClick, onNewLead, refreshTrigger }: Props) {
       console.error('Failed to move lead', e)
       fetchLeads()
     }
-  }
+  }, [fetchLeads])
 
   // Drag handlers
   const handleDragStart = useCallback((e: React.DragEvent, lead: Lead) => {
@@ -113,7 +113,7 @@ export function KanbanBoard({ onCardClick, onNewLead, refreshTrigger }: Props) {
     const newSortOrder = leadsInTarget.length > 0 ? Math.max(...leadsInTarget.map(l => l.sortOrder)) + 1 : 0
     moveToStage(draggedLead.id, targetStage, newSortOrder)
     setDraggedLead(null)
-  }, [draggedLead, leads])
+  }, [draggedLead, leads, moveToStage])
 
   function getLeadsForStage(stage: string) {
     return leads

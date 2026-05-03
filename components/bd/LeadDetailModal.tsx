@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
@@ -79,18 +79,7 @@ export function LeadDetailModal({ leadId, open, onClose, onConvert, onStageChang
   const [aiScoreData, setAiScoreData] = useState<AIScoreData | null>(null)
   const [scoring, setScoring] = useState(false)
 
-  useEffect(() => {
-    if (leadId && open) {
-      fetchLead()
-      fetchAIScore()
-    }
-    if (!open) {
-      setLead(null)
-      setAiScoreData(null)
-    }
-  }, [leadId, open])
-
-  async function fetchLead() {
+  const fetchLead = useCallback(async () => {
     if (!leadId) return
     setLoading(true)
     try {
@@ -102,9 +91,9 @@ export function LeadDetailModal({ leadId, open, onClose, onConvert, onStageChang
     } finally {
       setLoading(false)
     }
-  }
+  }, [leadId])
 
-  async function fetchAIScore() {
+  const fetchAIScore = useCallback(async () => {
     if (!leadId) return
     try {
       const res = await fetch(`/api/leads/${leadId}/ai-score`)
@@ -113,7 +102,18 @@ export function LeadDetailModal({ leadId, open, onClose, onConvert, onStageChang
     } catch (e) {
       console.error('Failed to fetch AI score', e)
     }
-  }
+  }, [leadId])
+
+  useEffect(() => {
+    if (leadId && open) {
+      fetchLead()
+      fetchAIScore()
+    }
+    if (!open) {
+      setLead(null)
+      setAiScoreData(null)
+    }
+  }, [leadId, open, fetchLead, fetchAIScore])
 
   async function handleRescore() {
     if (!leadId) return
