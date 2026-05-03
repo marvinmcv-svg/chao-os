@@ -34,7 +34,7 @@
     "bcryptjs": "^2.4.3",
     "@aws-sdk/client-s3": "^3.683.0",
     "resend": "^4.0.0",
-    "cuid": "^3.0.0",
+    "@paralleldrive/cuid2": "^2.1.0",
     "@aws-sdk/s3-request-presigner": "^3.683.0"
   },
   "devDependencies": {
