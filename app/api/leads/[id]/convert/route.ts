@@ -23,7 +23,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return Response.json({ success: false, error: { code: 'INVALID_STATE', message: 'Solo se pueden convertir leads en etapa WON' } }, { status: 422 })
     }
 
-    if (lead.convertedFromLeadId) {
+    if (lead.convertedToProjectId) {
       return Response.json({ success: false, error: { code: 'CONFLICT', message: 'Este lead ya fue convertido a proyecto' } }, { status: 409 })
     }
 
@@ -84,7 +84,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     await prisma.lead.update({
       where: { id: params.id },
-      data: { convertedFromLeadId: project.id },
+      data: { convertedToProjectId: project.id },
     })
 
     await prisma.auditLog.create({
@@ -93,7 +93,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         action: 'CREATE',
         entityType: 'Project',
         entityId: project.id,
-        payload: { convertedFromLeadId: params.id, leadName: lead.projectName },
+        payload: { convertedToProjectId: params.id, leadName: lead.projectName },
       },
     })
 
