@@ -91,8 +91,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Generate CUID for this document's S3 object
-    const { cuid } = await import('@paralleldrive/cuid2')
-    const docId = cuid()
+    const docId = crypto.randomUUID()
 
     const { uploadUrl, fileKey, expiresAt } = await getPresignedUploadUrl(
       filename,
