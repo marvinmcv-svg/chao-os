@@ -40,11 +40,9 @@ export async function GET(req: NextRequest) {
         .reduce((sum, i) => sum + i.amountUSD, 0)
       const expenses = project.expenses.reduce((sum, e) => sum + e.amountUSD, 0)
       const hoursLogged = project.timeEntries.reduce((sum, t) => sum + t.hours, 0)
-      // Approximate labor cost: average hourly rate × total hours
-      // (Per-member hour tracking not available in current schema)
-      const totalHourlyRate = project.teamMembers.reduce((sum, m) => sum + (m.hourlyRate ?? DEFAULT_HOURLY_RATE), 0)
-      const avgHourlyRate = project.teamMembers.length > 0 ? totalHourlyRate / project.teamMembers.length : DEFAULT_HOURLY_RATE
-      const laborCost = avgHourlyRate * hoursLogged
+      // Approximate labor cost: total hours × default hourly rate × number of team members
+      // Note: per-member hour tracking + custom rates deferred to v2
+      const laborCost = hoursLogged * DEFAULT_HOURLY_RATE
       const netProfit = revenue - expenses - laborCost
       const margin = revenue > 0 ? Math.round((netProfit / revenue) * 100) : 0
 
