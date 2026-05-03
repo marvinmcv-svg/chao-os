@@ -112,7 +112,7 @@ export async function POST(req: NextRequest) {
 }
 
 // Utility: recalculate team member utilization for current week (exported for reuse in [id] route)
-export async function recalculateTeamUtilization(userId: string) {
+async function recalculateTeamUtilization(userId: string) {
   const member = await prisma.teamMember.findUnique({ where: { userId } })
   if (!member) return
 

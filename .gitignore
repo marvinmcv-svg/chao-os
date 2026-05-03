@@ -39,3 +39,5 @@ prisma/*.db
 
 # cache
 /node_modules/.cache
+
+.vercel

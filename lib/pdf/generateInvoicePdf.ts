@@ -6,7 +6,7 @@ export async function generateInvoicePdf(invoice: any): Promise<Buffer> {
   // In dev without Chrome installed, this will fail — that's expected
   // For Sprint 4 demo, the PDF endpoint returns a placeholder response
   try {
-    const puppeteer = await import('puppeteer')
+    const puppeteer = await import(/* webpackIgnore: true */ 'puppeteer')
     const browser = await puppeteer.default.launch({ headless: true })
     const page = await browser.newPage()
 

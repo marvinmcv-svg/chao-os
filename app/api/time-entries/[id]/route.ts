@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { recalculateTeamUtilization } from '@/app/api/time-entries/route'
+import { recalculateTeamUtilization } from '@/lib/time-util'
 
 // DELETE /api/time-entries/:id
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
