@@ -52,6 +52,7 @@ export const CreateProjectSchema = z.object({
   totalBudgetUSD: z.number().positive(),
   startDate: z.string().datetime(),
   estimatedEndDate: z.string().datetime(),
+  actualEndDate: z.string().datetime().optional(),
 })
 
 export const UpdateProjectSchema = CreateProjectSchema.partial()
