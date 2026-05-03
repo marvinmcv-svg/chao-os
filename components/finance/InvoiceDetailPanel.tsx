@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { X, Download, CheckCircle, Clock, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
@@ -37,14 +37,7 @@ export function InvoiceDetailPanel({ invoiceId, open, onClose, onUpdate }: Props
   const [loading, setLoading] = useState(false)
   const [updating, setUpdating] = useState(false)
 
-  useEffect(() => {
-    if (invoiceId && open) {
-      fetchInvoice()
-    }
-    if (!open) setInvoice(null)
-  }, [invoiceId, open])
-
-  async function fetchInvoice() {
+  const fetchInvoice = useCallback(async () => {
     if (!invoiceId) return
     setLoading(true)
     try {
@@ -56,7 +49,14 @@ export function InvoiceDetailPanel({ invoiceId, open, onClose, onUpdate }: Props
     } finally {
       setLoading(false)
     }
-  }
+  }, [invoiceId])
+
+  useEffect(() => {
+    if (invoiceId && open) {
+      fetchInvoice()
+    }
+    if (!open) setInvoice(null)
+  }, [invoiceId, open, fetchInvoice])
 
   async function updateStatus(newStatus: string) {
     if (!invoice) return

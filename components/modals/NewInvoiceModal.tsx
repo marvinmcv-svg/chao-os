@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Modal } from '@/components/ui/Modal'
@@ -46,15 +46,7 @@ export function NewInvoiceModal({ open, onClose, onSuccess }: Props) {
 
   const currency = watch('currency')
 
-  useEffect(() => {
-    if (open) {
-      fetchProjects()
-      reset()
-      setError('')
-    }
-  }, [open])
-
-  async function fetchProjects() {
+  const fetchProjects = useCallback(async () => {
     try {
       const res = await fetch('/api/projects')
       const json = await res.json()
@@ -62,7 +54,19 @@ export function NewInvoiceModal({ open, onClose, onSuccess }: Props) {
     } catch (e) {
       console.error('Failed to fetch projects', e)
     }
-  }
+  }, [])
+
+  const resetForm = useCallback(() => {
+    reset()
+    setError('')
+  }, [reset])
+
+  useEffect(() => {
+    if (open) {
+      fetchProjects()
+      resetForm()
+    }
+  }, [open, fetchProjects, resetForm])
 
   async function onSubmit(data: FormData) {
     setSubmitting(true)

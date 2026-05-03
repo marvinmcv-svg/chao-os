@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { X, User, Calendar, DollarSign, FolderKanban, CheckCircle, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
@@ -55,25 +55,7 @@ export function ProjectDetailPanel({ projectId, open, onClose, onUpdate }: Props
   const [error, setError] = useState<string | null>(null)
   const controllerRef = useRef<AbortController | null>(null)
 
-  useEffect(() => {
-    if (projectId) {
-      fetchProject()
-    }
-  }, [projectId])
-
-  useEffect(() => {
-    return () => controllerRef.current?.abort()
-  }, [])
-
-  useEffect(() => {
-    if (!projectId) {
-      setProject(null)
-      setLoading(false)
-      setError(null)
-    }
-  }, [projectId])
-
-  async function fetchProject() {
+  const fetchProject = useCallback(async () => {
     if (!projectId) return
     controllerRef.current?.abort()
     controllerRef.current = new AbortController()
@@ -90,7 +72,13 @@ export function ProjectDetailPanel({ projectId, open, onClose, onUpdate }: Props
     } finally {
       setLoading(false)
     }
-  }
+  }, [projectId])
+
+  useEffect(() => {
+    if (projectId) {
+      fetchProject()
+    }
+  }, [projectId, fetchProject])
 
   // Escape key closes panel
   useEffect(() => {
