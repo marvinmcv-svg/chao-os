@@ -27,11 +27,7 @@ export async function GET(req: NextRequest) {
         timeEntries: {
           select: { hours: true },
         },
-        teamMembers: {
-          include: {
-            user: { select: { hourlyRate: true } },
-          },
-        },
+        teamMembers: true,
       },
     })
 
@@ -46,7 +42,7 @@ export async function GET(req: NextRequest) {
       const hoursLogged = project.timeEntries.reduce((sum, t) => sum + t.hours, 0)
       // Approximate labor cost: average hourly rate × total hours
       // (Per-member hour tracking not available in current schema)
-      const totalHourlyRate = project.teamMembers.reduce((sum, m) => sum + (m.user.hourlyRate ?? DEFAULT_HOURLY_RATE), 0)
+      const totalHourlyRate = project.teamMembers.reduce((sum, m) => sum + (m.hourlyRate ?? DEFAULT_HOURLY_RATE), 0)
       const avgHourlyRate = project.teamMembers.length > 0 ? totalHourlyRate / project.teamMembers.length : DEFAULT_HOURLY_RATE
       const laborCost = avgHourlyRate * hoursLogged
       const netProfit = revenue - expenses - laborCost
