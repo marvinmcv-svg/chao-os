@@ -17,14 +17,6 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         user: {
           select: { id: true, name: true, email: true, avatarInitials: true, role: true, capacityPercent: true },
         },
-        tasks: {
-          where: { status: { not: 'DONE' } },
-          orderBy: { dueDate: 'asc' },
-          take: 10,
-          include: {
-            project: { select: { id: true, code: true, name: true } },
-          },
-        },
       },
     })
 
@@ -46,7 +38,14 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
     const weeklyHours = weekEntries.reduce((sum, e) => sum + e.hours, 0)
 
-    const upcomingDeadlines = member.tasks.filter(t => {
+    const upcomingTasks = await prisma.task.findMany({
+      where: { assignedToId: member.userId, status: { not: 'DONE' } },
+      orderBy: { dueDate: 'asc' },
+      take: 10,
+      include: { project: { select: { id: true, code: true, name: true } } },
+    })
+
+    const upcomingDeadlines = upcomingTasks.filter(t => {
       const due = new Date(t.dueDate)
       const weekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
       return due <= weekFromNow
