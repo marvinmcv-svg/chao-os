@@ -8,31 +8,32 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const REGION = process.env.AWS_REGION ?? ''
-const ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID ?? ''
-const SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY ?? ''
-const BUCKET = process.env.DOCUMENTS_S3_BUCKET ?? ''
+function getRegion() { return process.env.AWS_REGION ?? '' }
+function getAccessKeyId() { return process.env.AWS_ACCESS_KEY_ID ?? '' }
+function getSecretAccessKey() { return process.env.AWS_SECRET_ACCESS_KEY ?? '' }
+function getBucket() { return process.env.DOCUMENTS_S3_BUCKET ?? '' }
 
 function requireEnv(name: string, value: string): string {
   if (!value) throw new Error(`Missing env var: ${name}`)
   return value
 }
 
-// Validate at module load — fail fast if misconfigured
-const REGION_OK = requireEnv('AWS_REGION', REGION)
-const ACCESS_KEY_OK = requireEnv('AWS_ACCESS_KEY_ID', ACCESS_KEY_ID)
-const SECRET_OK = requireEnv('AWS_SECRET_ACCESS_KEY', SECRET_ACCESS_KEY)
-const BUCKET_OK = requireEnv('DOCUMENTS_S3_BUCKET', BUCKET)
+// ── Client (lazy init) ───────────────────────────────────────────────────────
 
-// ── Client ────────────────────────────────────────────────────────────────────
+let _s3Client: S3Client | null = null
 
-export const s3Client = new S3Client({
-  region: REGION_OK,
-  credentials: {
-    accessKeyId: ACCESS_KEY_OK,
-    secretAccessKey: SECRET_OK,
-  },
-})
+function getS3Client(): S3Client {
+  if (_s3Client) return _s3Client
+  const region = requireEnv('AWS_REGION', getRegion())
+  const accessKeyId = requireEnv('AWS_ACCESS_KEY_ID', getAccessKeyId())
+  const secretAccessKey = requireEnv('AWS_SECRET_ACCESS_KEY', getSecretAccessKey())
+  requireEnv('DOCUMENTS_S3_BUCKET', getBucket()) // validate bucket exists
+  _s3Client = new S3Client({
+    region,
+    credentials: { accessKeyId, secretAccessKey },
+  })
+  return _s3Client
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -60,16 +61,18 @@ export async function getPresignedUploadUrl(
   cuid: string
 ): Promise<PresignedUploadResult> {
   const fileKey = buildFileKey(projectId, filename, cuid)
+  const bucket = requireEnv('DOCUMENTS_S3_BUCKET', getBucket())
+  const client = getS3Client()
 
   const command = new PutObjectCommand({
-    Bucket: BUCKET_OK,
+    Bucket: bucket,
     Key: fileKey,
     ContentType: mimeType,
   })
 
   const expiresAt = Date.now() + 15 * 60 * 1000 // 15 min from now (ms)
 
-  const uploadUrl = await getSignedUrl(s3Client, command, {
+  const uploadUrl = await getSignedUrl(client, command, {
     expiresIn: 15 * 60, // seconds
   })
 
@@ -84,14 +87,17 @@ export interface PresignedDownloadResult {
 }
 
 export async function getPresignedDownloadUrl(fileKey: string): Promise<PresignedDownloadResult> {
+  const bucket = requireEnv('DOCUMENTS_S3_BUCKET', getBucket())
+  const client = getS3Client()
+
   const command = new GetObjectCommand({
-    Bucket: BUCKET_OK,
+    Bucket: bucket,
     Key: fileKey,
   })
 
   const expiresAt = Date.now() + 60 * 60 * 1000 // 1 hour
 
-  const downloadUrl = await getSignedUrl(s3Client, command, {
+  const downloadUrl = await getSignedUrl(client, command, {
     expiresIn: 60 * 60, // seconds
   })
 
@@ -101,9 +107,12 @@ export async function getPresignedDownloadUrl(fileKey: string): Promise<Presigne
 // ── Delete object ─────────────────────────────────────────────────────────────
 
 export async function deleteObject(fileKey: string): Promise<void> {
+  const bucket = requireEnv('DOCUMENTS_S3_BUCKET', getBucket())
+  const client = getS3Client()
+
   const command = new DeleteObjectCommand({
-    Bucket: BUCKET_OK,
+    Bucket: bucket,
     Key: fileKey,
   })
-  await s3Client.send(command)
+  await client.send(command)
 }
