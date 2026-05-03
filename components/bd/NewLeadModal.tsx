@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Modal } from '@/components/ui/Modal'
@@ -47,15 +47,7 @@ export function NewLeadModal({ open, onClose, onSuccess }: Props) {
 
   const estimatedValue = watch('estimatedValueUSD')
 
-  useEffect(() => {
-    if (open) {
-      fetchTeam()
-      reset()
-      setError('')
-    }
-  }, [open])
-
-  async function fetchTeam() {
+  const fetchTeam = useCallback(async () => {
     try {
       const res = await fetch('/api/team')
       const json = await res.json()
@@ -63,7 +55,19 @@ export function NewLeadModal({ open, onClose, onSuccess }: Props) {
     } catch (e) {
       console.error('Failed to fetch team', e)
     }
-  }
+  }, [])
+
+  const resetForm = useCallback(() => {
+    reset()
+    setError('')
+  }, [reset])
+
+  useEffect(() => {
+    if (open) {
+      fetchTeam()
+      resetForm()
+    }
+  }, [open, fetchTeam, resetForm])
 
   async function onSubmit(data: FormData) {
     setSubmitting(true)
