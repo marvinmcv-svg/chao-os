@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
     const winRate = totalLeads > 0 ? Math.round((wonLeads / (wonLeads + lostLeads)) * 100) : 0
 
     const closedWon = await prisma.lead.findMany({
-      where: { pipelineStage: 'WON', convertedFromLeadId: { not: null } },
+      where: { pipelineStage: 'WON', convertedToProjectId: { not: null } },
       select: { createdAt: true, updatedAt: true },
     })
     const avgCycleDays = closedWon.length > 0
