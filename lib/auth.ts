@@ -1,6 +1,6 @@
 import NextAuth from 'next-auth'
 import Credentials from 'next-auth/providers/credentials'
-import { hash, verify } from '@node-rs/bcrypt'
+import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
@@ -28,7 +28,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           return null // Same message for both "user not found" and "wrong password"
         }
 
-        const isValid = await verify(password, user.passwordHash)
+        const isValid = await bcrypt.compare(password, user.passwordHash)
         if (!isValid) {
           return null
         }
