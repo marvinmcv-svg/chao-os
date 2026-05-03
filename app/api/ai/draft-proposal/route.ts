@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { generateProposalDraft } from '@/lib/claude'
+import { generateProposalDraft, type ProjectContext } from '@/lib/claude'
 import { proposalStore } from '@/lib/proposal-store'
 
 // POST /api/ai/draft-proposal — generate a proposal draft for a lead
@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. Build project context if lead is converted
-    let projectContext: Record<string, unknown> | null = null
+    let projectContext: ProjectContext | null = null
     if (lead.convertedToProject) {
       const project = lead.convertedToProject
       projectContext = {
