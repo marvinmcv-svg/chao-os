@@ -590,7 +590,7 @@ interface LeadInfo {
   assignedTo: string
 }
 
-interface ProjectContext {
+export interface ProjectContext {
   code: string
   name: string
   client: { name: string | null; company: string | null; email: string | null }
