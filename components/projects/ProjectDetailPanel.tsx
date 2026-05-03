@@ -24,7 +24,7 @@ interface ProjectDetail {
   startDate: string
   estimatedEndDate: string
   client: { name: string; company: string; email: string; phone: string }
-  projectManager: { name: string; email: string; avatarInitials: string; role: string }
+  projectManager: { id: string; name: string; email: string; avatarInitials: string; role: string }
   phases: {
     id: string
     phase: string
