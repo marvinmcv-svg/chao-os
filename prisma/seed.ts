@@ -3,7 +3,7 @@
 // Uses tsx to execute TypeScript directly
 
 import { PrismaClient, UserRole, ProjectType, ContractType, ProjectPhase, ProjectStatus, PhaseStatus, PipelineStage, ProjectTypeLead, SourceType, ClientType, InvoiceStatus, Currency, TaskStatus, TaskPriority, DocumentStatus, NotificationType, AIRecommendation } from '@prisma/client'
-import bcrypt from 'bcryptjs'
+import { hash } from '@node-rs/bcrypt'
 import { generatePortalToken } from '@/lib/portal-auth'
 
 const prisma = new PrismaClient()
@@ -40,7 +40,7 @@ async function main() {
   // =========================================================================
   // ADMIN USER
   // =========================================================================
-  const passwordHash = await bcrypt.hash('Cha0Admin2025!', 12)
+  const passwordHash = await hash('Cha0Admin2025!', 12)
 
   const admin = await prisma.user.create({
     data: {
