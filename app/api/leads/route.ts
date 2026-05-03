@@ -61,6 +61,7 @@ export async function POST(req: NextRequest) {
     const lead = await prisma.lead.create({
       data: {
         ...data,
+        contactPhone: data.contactPhone || '',
         sortOrder: (maxSort._max.sortOrder ?? 0) + 1,
       },
       include: {
