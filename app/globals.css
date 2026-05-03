@@ -1,0 +1,84 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=Syne:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Grayscale */
+  --black: #000000;
+  --white: #ffffff;
+  --g95: #0a0a0a;   /* app background */
+  --g90: #111111;
+  --g85: #1a1a1a;   /* card background */
+  --g80: #222222;   /* card borders, table rows */
+  --g75: #282828;
+  --g70: #333333;   /* dividers */
+  --g60: #444444;
+  --g50: #555555;   /* disabled */
+  --g40: #666666;   /* labels */
+  --g30: #888888;   /* secondary text */
+  --g20: #aaaaaa;   /* body text */
+  --g10: #dddddd;
+  --g05: #f4f4f4;
+
+  /* Status colors */
+  --green: #4ade80;
+  --yellow: #facc15;
+  --red: #f87171;
+  --blue: #60a5fa;
+
+  /* Typography */
+  --font-display: 'DM Serif Display', Georgia, serif;
+  --font-mono: 'DM Mono', 'Courier New', monospace;
+  --font-ui: 'Syne', sans-serif;
+
+  /* Layout */
+  --sidebar-w: 240px;
+  --topbar-h: 56px;
+  --radius: 6px;
+}
+
+/* Base styles */
+html {
+  font-family: var(--font-ui);
+  background-color: var(--g95);
+  color: var(--g20);
+}
+
+body {
+  min-height: 100vh;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--g90);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--g60);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--g50);
+}
+
+/* Focus visible */
+*:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+/* Typography classes */
+.font-display { font-family: var(--font-display); }
+.font-mono { font-family: var(--font-mono); }
+.font-ui { font-family: var(--font-ui); }
+
+/* Status badge backgrounds (subtle) */
+.status-green { background-color: rgba(74, 222, 128, 0.1); color: var(--green); }
+.status-yellow { background-color: rgba(250, 204, 21, 0.1); color: var(--yellow); }
+.status-red { background-color: rgba(248, 113, 113, 0.1); color: var(--red); }
+.status-blue { background-color: rgba(96, 165, 250, 0.1); color: var(--blue); }

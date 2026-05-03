@@ -1,0 +1,538 @@
+// CHAO OS — Prisma Schema
+// Database: PostgreSQL
+// Version: 0.1.0
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum UserRole {
+  PRINCIPAL
+  ARCHITECT_SENIOR
+  ARCHITECT
+  BIM
+  ADMIN
+}
+
+enum ProjectType {
+  RESIDENTIAL
+  COMMERCIAL
+  INDUSTRIAL
+  INSTITUTIONAL
+  MIXED
+}
+
+enum ContractType {
+  FIXED_FEE
+  PERCENTAGE
+  TIME_AND_MATERIALS
+}
+
+enum ProjectPhase {
+  SD  // Schematic Design
+  DD  // Design Development
+  CD  // Construction Documents
+  CA  // Construction Administration
+}
+
+enum ProjectStatus {
+  ON_TRACK
+  AT_RISK
+  OVER_BUDGET
+  CLOSING
+  COMPLETED
+}
+
+enum PhaseStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETE
+}
+
+enum PipelineStage {
+  PROSPECT
+  QUALIFIED
+  PROPOSAL
+  NEGOTIATION
+  WON
+  LOST
+}
+
+enum ProjectTypeLead {
+  RESIDENTIAL
+  COMMERCIAL
+  INDUSTRIAL
+  INSTITUTIONAL
+  MIXED
+}
+
+enum SourceType {
+  REFERRAL
+  DIRECT
+  ONLINE
+  NETWORK
+}
+
+enum AIRecommendation {
+  GO
+  NO_GO
+  REVIEW
+}
+
+enum ClientType {
+  ACTIVE
+  PROSPECT
+  PAST
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PENDING
+  OVERDUE
+  PAID
+}
+
+enum Currency {
+  USD
+  BOB
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  REVIEW
+  DONE
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum DocumentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum NotificationType {
+  INVOICE_SENT
+  PAYMENT_RECEIVED
+  PAYMENT_OVERDUE
+  LEAD_CONVERTED
+  PROJECT_COMPLETED
+  MILESTONE_APPROVED
+  DOCUMENT_UPLOADED
+  BUDGET_WARNING
+  SYSTEM_ALERT
+  BUDGET_ALERT
+  CAPACITY_ALERT
+  OVERDUE_INVOICE
+  DEADLINE_APPROACHING
+  PROJECT_STATUS_CHANGE
+}
+
+// ============================================================================
+// MODELS
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+// User & Auth
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  passwordHash  String
+  role          UserRole  @default(ARCHITECT)
+  avatarInitials String   @default("")
+  capacityPercent Int     @default(100)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  teamMember         TeamMember?
+  assignedLeads      Lead[]            @relation("AssignedLeads")
+  managedProjects    Project[]         @relation("ProjectManager")
+  projectMemberships ProjectMember[]
+  tasks              Task[]
+  timeEntries        TimeEntry[]
+  notifications      Notification[]
+  auditLogs          AuditLog[]
+  uploadedDocuments  Document[]
+  comments           Comment[]
+  passwordChanges    PasswordChange[]   @relation("UserPasswordChanges")
+  approvedMilestones Milestone[]        @relation("ApprovedBy")
+}
+
+model TeamMember {
+  id                   String    @id @default(cuid())
+  userId               String    @unique
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  weeklyHoursCapacity  Int       @default(40)
+  weeklyHoursLogged    Float     @default(0)
+  utilizationPercent   Int       @default(0)
+  role                 String
+  startDate            DateTime?
+  hourlyRate           Float?
+}
+
+model PasswordChange {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation("UserPasswordChanges", fields: [userId], references: [id], onDelete: Cascade)
+  changedAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Client
+// ---------------------------------------------------------------------------
+
+model Client {
+  id                  String     @id @default(cuid())
+  name                String
+  company             String
+  email               String
+  phone               String
+  type                ClientType @default(PROSPECT)
+  aiScore             Int        @default(0)
+  totalBilledUSD      Float      @default(0)
+  portalAccessEnabled Boolean    @default(false)
+  portalTokenHash     String?
+  portalLastLogin     DateTime?
+  notes               String     @default("")
+  createdAt           DateTime   @default(now())
+
+  // Relations
+  projects Project[]
+  invoices Invoice[]
+}
+
+// ---------------------------------------------------------------------------
+// Project & Phase
+// ---------------------------------------------------------------------------
+
+model Project {
+  id                     String        @id @default(cuid())
+  code                   String        @unique
+  name                   String
+  clientId               String
+  client                 Client        @relation(fields: [clientId], references: [id])
+  projectManagerId       String
+  projectManager         User          @relation("ProjectManager", fields: [projectManagerId], references: [id])
+  type                   ProjectType
+  contractType           ContractType
+  currentPhase           ProjectPhase  @default(SD)
+  totalBudgetUSD         Float
+  totalSpentUSD          Float         @default(0)
+  overallProgressPercent Int           @default(0)
+  status                 ProjectStatus @default(ON_TRACK)
+  startDate              DateTime
+  estimatedEndDate       DateTime
+  actualEndDate          DateTime?
+  convertedFromLeadId String?       @unique
+  convertedFromLead   Lead?         @relation("ConvertedProject")
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+
+  // Relations
+  phases               Phase[]
+  milestones            Milestone[]
+  teamMembers           ProjectMember[]
+  tasks                 Task[]
+  invoices              Invoice[]
+  expenses              Expense[]
+  documents             Document[]
+  comments              Comment[]
+  timeEntries            TimeEntry[]
+}
+
+model Phase {
+  id              String       @id @default(cuid())
+  projectId       String
+  project         Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phase           ProjectPhase
+  label           String
+  budgetUSD       Float
+  spentUSD        Float        @default(0)
+  progressPercent Int          @default(0)
+  status          PhaseStatus  @default(NOT_STARTED)
+  startDate       DateTime?
+  endDate         DateTime?
+
+  tasks           Task[]
+  timeEntries     TimeEntry[]
+
+  @@unique([projectId, phase])
+}
+
+model ProjectMember {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String
+
+  @@unique([projectId, userId])
+}
+
+// ---------------------------------------------------------------------------
+// Lead / Business Development
+// ---------------------------------------------------------------------------
+
+model Lead {
+  id                 String            @id @default(cuid())
+  projectName         String
+  company             String
+  contactName         String
+  contactEmail        String
+  contactPhone        String
+  estimatedValueUSD   Float
+  projectType         ProjectTypeLead
+  pipelineStage       PipelineStage     @default(PROSPECT)
+  closeProbability    Int               @default(0)
+  aiScore             Int?
+  aiScoreBreakdown    Json?
+  aiRecommendation    AIRecommendation?
+  aiAnalysis          String?
+  notes               String            @default("")
+  sourceType          SourceType
+  sortOrder           Int               @default(0)
+  assignedToId        String
+  assignedTo          User              @relation("AssignedLeads", fields: [assignedToId], references: [id])
+  convertedToProjectId String?       @unique
+  convertedToProject   Project?      @relation("ConvertedProject", fields: [convertedToProjectId], references: [id])
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Invoice
+// ---------------------------------------------------------------------------
+
+model Invoice {
+  id           String        @id @default(cuid())
+  number       String        @unique
+  projectId    String
+  project      Project       @relation(fields: [projectId], references: [id])
+  clientId     String
+  client       Client        @relation(fields: [clientId], references: [id])
+  amountUSD    Float
+  currency     Currency      @default(USD)
+  exchangeRate Float         @default(1.0)
+  status       InvoiceStatus @default(DRAFT)
+  issuedAt     DateTime      @default(now())
+  dueDate      DateTime
+  paidAt       DateTime?
+  notes        String        @default("")
+  pdfUrl       String?
+  createdAt    DateTime      @default(now())
+
+  // Relations
+  lineItems InvoiceLineItem[]
+  payments   Payment[]
+}
+
+model InvoiceLineItem {
+  id           String  @id @default(cuid())
+  invoiceId    String
+  invoice      Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  description  String
+  quantity     Float
+  unitPriceUSD Float
+  totalUSD     Float
+}
+
+model Payment {
+  id         String   @id @default(cuid())
+  invoiceId  String
+  invoice    Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  amountUSD  Float
+  paidAt     DateTime @default(now())
+  method     String?
+  reference  String?
+}
+
+// ---------------------------------------------------------------------------
+// Milestone
+// ---------------------------------------------------------------------------
+
+model Milestone {
+  id           String        @id @default(cuid())
+  projectId    String
+  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phase        ProjectPhase?
+  label        String
+  dueDate      DateTime
+  status       String        @default("pending")
+  approvedAt   DateTime?
+  approvedById String?
+  approvedBy   User?         @relation("ApprovedBy", fields: [approvedById], references: [id])
+
+  comments Comment[]
+}
+
+// ---------------------------------------------------------------------------
+// Task
+// ---------------------------------------------------------------------------
+
+model Task {
+  id             String       @id @default(cuid())
+  projectId      String
+  project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phaseId        String?
+  phase          Phase?       @relation(fields: [phaseId], references: [id])
+  assignedToId   String
+  assignedTo     User         @relation(fields: [assignedToId], references: [id])
+  title          String
+  description    String       @default("")
+  status         TaskStatus   @default(TODO)
+  priority       TaskPriority @default(MEDIUM)
+  dueDate        DateTime
+  estimatedHours Float
+  loggedHours    Float        @default(0)
+  createdAt      DateTime     @default(now())
+
+  timeEntries TimeEntry[]
+}
+
+// ---------------------------------------------------------------------------
+// Time Entry
+// ---------------------------------------------------------------------------
+
+model TimeEntry {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phaseId     String?
+  phase       Phase?   @relation(fields: [phaseId], references: [id])
+  taskId      String?
+  task        Task?    @relation(fields: [taskId], references: [id])
+  description String
+  hours       Float
+  date        DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([userId, date])
+  @@index([projectId])
+}
+
+// ---------------------------------------------------------------------------
+// Expense
+// ---------------------------------------------------------------------------
+
+model Expense {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  description String
+  amountUSD   Float
+  currency    Currency @default(USD)
+  incurredAt  DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([projectId])
+}
+
+// ---------------------------------------------------------------------------
+// Document
+// ---------------------------------------------------------------------------
+
+model Document {
+  id           String         @id @default(cuid())
+  projectId    String
+  project      Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phase        ProjectPhase?
+  filename     String
+  url          String
+  mimeType     String?
+  sizeBytes    Int?
+  status       DocumentStatus @default(PENDING)
+  uploadedById String
+  uploadedBy   User           @relation(fields: [uploadedById], references: [id])
+  uploadedAt   DateTime       @default(now())
+
+  @@index([projectId])
+}
+
+// ---------------------------------------------------------------------------
+// Comment
+// ---------------------------------------------------------------------------
+
+model Comment {
+  id          String     @id @default(cuid())
+  projectId   String
+  project     Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  milestoneId String?
+  milestone   Milestone? @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+  authorId    String
+  author      User       @relation(fields: [authorId], references: [id])
+  body        String
+  createdAt   DateTime   @default(now())
+
+  @@index([milestoneId])
+}
+
+// ---------------------------------------------------------------------------
+// Notification
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  message   String
+  linkUrl   String?
+  read      Boolean          @default(false)
+  data      Json?
+  createdAt DateTime         @default(now())
+
+  @@index([userId, read])
+}
+
+// ---------------------------------------------------------------------------
+// AI Draft Proposal
+// ---------------------------------------------------------------------------
+
+model ProposalDraft {
+  id          String   @id @default(cuid())
+  leadId      String   @unique
+  content     String
+  generatedAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Audit Log
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  action     String
+  entityType String
+  entityId   String
+  payload    Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([userId])
+}
