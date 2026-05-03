@@ -9,9 +9,11 @@ export const metadata: Metadata = {
   manifest: '/manifest.json',
   themeColor: '#0f0f0f',
   viewport: 'width=device-width, initial-scale=1, maximum-scale=1',
-  appleMobileWebAppCapable: 'yes',
-  appleMobileWebAppStatusBarStyle: 'black-translucent',
-  appleMobileWebAppTitle: 'CHAO OS',
+  other: {
+    'apple-mobile-web-app-capable': 'yes',
+    'apple-mobile-web-app-status-bar-style': 'black-translucent',
+    'apple-mobile-web-app-title': 'CHAO OS',
+  },
   icons: {
     icon: '/icons/icon.svg',
     apple: '/icon-192.png',
