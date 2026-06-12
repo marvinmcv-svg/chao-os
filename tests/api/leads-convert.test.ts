@@ -23,7 +23,10 @@ vi.mock('@/lib/auth', () => ({
 }))
 
 import { auth } from '@/lib/auth'
-const mockAuth = vi.mocked(auth)
+// Cast to `any`: NextAuth's `auth` is overloaded (handler / middleware /
+// getter), so `vi.mocked(auth)` picks the wrong overload and rejects
+// `Session`-shaped values. We only need it as a typed mock.
+const mockAuth = vi.mocked(auth) as any
 
 describe('POST /api/leads/:id/convert', () => {
   let admin: Awaited<ReturnType<typeof seedAdminUser>>
@@ -53,7 +56,7 @@ describe('POST /api/leads/:id/convert', () => {
 
     const req = makeRequest('POST', `http://localhost:3000/api/leads/${lead.id}/convert`)
     const res = await POST(req, { params: { id: lead.id } })
-    const body = await parseJson<ApiResponse<any>>(res)
+    const body = (await parseJson<ApiResponse<any>>(res)) as any
 
     expect(res.status).toBe(201)
     expect(body.success).toBe(true)
@@ -101,7 +104,7 @@ describe('POST /api/leads/:id/convert', () => {
 
     const req = makeRequest('POST', `http://localhost:3000/api/leads/${lead.id}/convert`)
     const res = await POST(req, { params: { id: lead.id } })
-    const body = await parseJson<ApiResponse<any>>(res)
+    const body = (await parseJson<ApiResponse<any>>(res)) as any
 
     expect(res.status).toBe(201)
     expect(body.data.clientId).toBe(existing.id)
@@ -117,7 +120,7 @@ describe('POST /api/leads/:id/convert', () => {
     const req = makeRequest('POST', 'http://localhost:3000/api/leads/nonexistent/convert')
     const res = await POST(req, { params: { id: 'nonexistent' } })
     expect(res.status).toBe(404)
-    const body = await parseJson<ApiResponse<any>>(res)
+    const body = (await parseJson<ApiResponse<any>>(res)) as any
     expect(body.success).toBe(false)
     expect(body.error?.code).toBe('NOT_FOUND')
   })
@@ -130,7 +133,7 @@ describe('POST /api/leads/:id/convert', () => {
     const req = makeRequest('POST', `http://localhost:3000/api/leads/${lead.id}/convert`)
     const res = await POST(req, { params: { id: lead.id } })
     expect(res.status).toBe(422)
-    const body = await parseJson<ApiResponse<any>>(res)
+    const body = (await parseJson<ApiResponse<any>>(res)) as any
     expect(body.error?.code).toBe('INVALID_STATE')
   })
 
@@ -162,7 +165,7 @@ describe('POST /api/leads/:id/convert', () => {
     const req = makeRequest('POST', `http://localhost:3000/api/leads/${lead.id}/convert`)
     const res = await POST(req, { params: { id: lead.id } })
     expect(res.status).toBe(409)
-    const body = await parseJson<ApiResponse<any>>(res)
+    const body = (await parseJson<ApiResponse<any>>(res)) as any
     expect(body.error?.code).toBe('CONFLICT')
   })
 
@@ -184,7 +187,7 @@ describe('POST /api/leads/:id/convert', () => {
     })
     const req = makeRequest('POST', `http://localhost:3000/api/leads/${lead.id}/convert`)
     const res = await POST(req, { params: { id: lead.id } })
-    const body = await parseJson<ApiResponse<any>>(res)
+    const body = (await parseJson<ApiResponse<any>>(res)) as any
 
     // The convert route logs the audit with the NEW project's id
     // (entityType: 'Project'), not the lead's id. See app/api/leads/[id]/convert/route.ts:90-98

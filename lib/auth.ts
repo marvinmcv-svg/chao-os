@@ -4,6 +4,24 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 
 /**
+ * User shape returned to NextAuth's `authorize` callback. Kept narrow on
+ * purpose: only fields the session actually needs.
+ */
+export interface AuthUser {
+  id: string
+  email: string
+  name: string
+  role: string
+  avatarInitials: string
+  teamMember?: {
+    id: string
+    role: string
+    weeklyHoursCapacity: number
+    utilizationPercent: number
+  }
+}
+
+/**
  * Standalone credentials authorizer — extracted so it can be unit-tested
  * without spinning up the full NextAuth middleware / Edge runtime.
  * Returns the user object (shape consumed by NextAuth) or `null` on failure.
@@ -14,7 +32,7 @@ import { prisma } from '@/lib/prisma'
 export async function authorizeCredentials(
   email: string,
   password: string
-): Promise<Record<string, unknown> | null> {
+): Promise<AuthUser | null> {
   if (!email || !password) return null
 
   const user = await prisma.user.findUnique({
@@ -32,7 +50,8 @@ export async function authorizeCredentials(
     email: user.email,
     name: user.name,
     role: user.role,
-    avatarInitials: user.avatarInitials,
+    // Prisma's avatarInitials is nullable; NextAuth's User expects string.
+    avatarInitials: user.avatarInitials ?? '',
     ...(user.teamMember && {
       teamMember: {
         id: user.teamMember.id,

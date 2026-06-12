@@ -17,7 +17,10 @@ import { makeRequest, parseJson, type ApiResponse } from '../helpers/api'
 
 vi.mock('@/lib/auth', () => ({ auth: vi.fn() }))
 import { auth } from '@/lib/auth'
-const mockAuth = vi.mocked(auth)
+// Cast to `any`: NextAuth's `auth` is overloaded (handler / middleware /
+// getter), so `vi.mocked(auth)` picks the wrong overload and rejects
+// `Session`-shaped values. We only need it as a typed mock.
+const mockAuth = vi.mocked(auth) as any
 
 describe('PATCH /api/invoices/:id/status', () => {
   let admin: Awaited<ReturnType<typeof seedAdminUser>>
@@ -54,7 +57,7 @@ describe('PATCH /api/invoices/:id/status', () => {
     const res = await PATCH(req, { params: { id: invoice.id } })
 
     expect(res.status).toBe(400)
-    const body = await parseJson<ApiResponse<any>>(res)
+    const body = (await parseJson<ApiResponse<any>>(res)) as any
     expect(body.error?.code).toBe('INSUFFICIENT_PAYMENTS')
   })
 
@@ -73,7 +76,7 @@ describe('PATCH /api/invoices/:id/status', () => {
     const res = await PATCH(req, { params: { id: invoice.id } })
 
     expect(res.status).toBe(400)
-    const body = await parseJson<ApiResponse<any>>(res)
+    const body = (await parseJson<ApiResponse<any>>(res)) as any
     expect(body.error?.code).toBe('INSUFFICIENT_PAYMENTS')
   })
 
@@ -92,7 +95,7 @@ describe('PATCH /api/invoices/:id/status', () => {
     const res = await PATCH(req, { params: { id: invoice.id } })
 
     expect(res.status).toBe(200)
-    const body = await parseJson<ApiResponse<any>>(res)
+    const body = (await parseJson<ApiResponse<any>>(res)) as any
     expect(body.data.status).toBe('PAID')
     expect(body.data.paidAt).toBeTruthy()
 
@@ -117,7 +120,7 @@ describe('PATCH /api/invoices/:id/status', () => {
     const res = await PATCH(req, { params: { id: invoice.id } })
 
     expect(res.status).toBe(200)
-    const body = await parseJson<ApiResponse<any>>(res)
+    const body = (await parseJson<ApiResponse<any>>(res)) as any
     expect(body.data.status).toBe('PAID')
   })
 
@@ -138,7 +141,7 @@ describe('PATCH /api/invoices/:id/status', () => {
     const res = await PATCH(req, { params: { id: invoice.id } })
 
     expect(res.status).toBe(200)
-    const body = await parseJson<ApiResponse<any>>(res)
+    const body = (await parseJson<ApiResponse<any>>(res)) as any
     expect(body.data.status).toBe('OVERDUE') // not PENDING
   })
 
@@ -159,7 +162,7 @@ describe('PATCH /api/invoices/:id/status', () => {
     const res = await PATCH(req, { params: { id: invoice.id } })
 
     expect(res.status).toBe(200)
-    const body = await parseJson<ApiResponse<any>>(res)
+    const body = (await parseJson<ApiResponse<any>>(res)) as any
     expect(body.data.status).toBe('PENDING')
   })
 
@@ -177,7 +180,7 @@ describe('PATCH /api/invoices/:id/status', () => {
     const res = await PATCH(req, { params: { id: invoice.id } })
 
     expect(res.status).toBe(200)
-    const body = await parseJson<ApiResponse<any>>(res)
+    const body = (await parseJson<ApiResponse<any>>(res)) as any
     expect(body.data.status).toBe('SENT')
   })
 

@@ -22,7 +22,9 @@ export function makeRequest(
     init.body = JSON.stringify(options.body)
     init.headers = { 'content-type': 'application/json', ...init.headers }
   }
-  return new NextRequest(url, init)
+  // NextRequest's RequestInit has a stricter `signal` type than the DOM
+  // one (rejects `null`); cast at the call site since we don't set signal.
+  return new NextRequest(url, init as unknown as ConstructorParameters<typeof NextRequest>[1])
 }
 
 /**
