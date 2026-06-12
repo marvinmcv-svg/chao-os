@@ -1067,6 +1067,7 @@ async function main() {
       data: {
         userId: marcoUser.id,
         type: NotificationType.BUDGET_ALERT,
+        title: 'Alerta de presupuesto',
         message: 'Proyecto Residencias Urubó ha superado el 80% del presupuesto en fase SD.',
         read: false,
         data: { projectId: projects[2].id, alertType: 'budget_overrun' },
@@ -1076,6 +1077,7 @@ async function main() {
       data: {
         userId: sofiaUser.id,
         type: NotificationType.OVERDUE_INVOICE,
+        title: 'Factura vencida',
         message: 'La factura INV-0141 ($29,600) está vencida desde el 31/01/2025.',
         read: false,
         data: { invoiceId: invoices[1].id },
@@ -1085,6 +1087,7 @@ async function main() {
       data: {
         userId: sofiaUser.id,
         type: NotificationType.CAPACITY_ALERT,
+        title: 'Capacidad del equipo',
         message: 'Sofía Herrera está al 98% de capacidad. Considere rebalancear carga.',
         read: true,
         data: { teamMemberId: sofiaUser.teamMember?.id },
@@ -1094,6 +1097,7 @@ async function main() {
       data: {
         userId: marcoUser.id,
         type: NotificationType.DEADLINE_APPROACHING,
+        title: 'Hito próximo a vencer',
         message: 'Hito 1 — SD 50% para Nave Industrial Warnes vence en 15 días.',
         read: false,
         data: { projectId: projects[5].id, milestoneId: null },

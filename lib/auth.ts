@@ -3,6 +3,47 @@ import Credentials from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 
+/**
+ * Standalone credentials authorizer — extracted so it can be unit-tested
+ * without spinning up the full NextAuth middleware / Edge runtime.
+ * Returns the user object (shape consumed by NextAuth) or `null` on failure.
+ *
+ * Both "user not found" and "wrong password" return null to prevent
+ * user-enumeration attacks (see OWASP A07:2021).
+ */
+export async function authorizeCredentials(
+  email: string,
+  password: string
+): Promise<Record<string, unknown> | null> {
+  if (!email || !password) return null
+
+  const user = await prisma.user.findUnique({
+    where: { email },
+    include: { teamMember: true },
+  })
+
+  if (!user) return null
+
+  const isValid = await bcrypt.compare(password, user.passwordHash)
+  if (!isValid) return null
+
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    avatarInitials: user.avatarInitials,
+    ...(user.teamMember && {
+      teamMember: {
+        id: user.teamMember.id,
+        role: user.teamMember.role,
+        weeklyHoursCapacity: user.teamMember.weeklyHoursCapacity,
+        utilizationPercent: user.teamMember.utilizationPercent,
+      },
+    }),
+  }
+}
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
     Credentials({
@@ -12,43 +53,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) {
-          return null
-        }
-
-        const email = credentials.email as string
-        const password = credentials.password as string
-
-        const user = await prisma.user.findUnique({
-          where: { email },
-          include: { teamMember: true },
-        })
-
-        if (!user) {
-          return null // Same message for both "user not found" and "wrong password"
-        }
-
-        const isValid = await bcrypt.compare(password, user.passwordHash)
-        if (!isValid) {
-          return null
-        }
-
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
-          avatarInitials: user.avatarInitials,
-          // Include teamMember data if available
-          ...(user.teamMember && {
-            teamMember: {
-              id: user.teamMember.id,
-              role: user.teamMember.role,
-              weeklyHoursCapacity: user.teamMember.weeklyHoursCapacity,
-              utilizationPercent: user.teamMember.utilizationPercent,
-            },
-          }),
-        }
+        if (!credentials?.email || !credentials?.password) return null
+        return authorizeCredentials(
+          credentials.email as string,
+          credentials.password as string
+        )
       },
     }),
   ],
