@@ -143,7 +143,7 @@ describe('Claude constructor', () => {
       const init = call[1] as RequestInit
       expect((init.headers as Record<string, string>)['x-api-key']).toBe('explicit-key')
       const body = JSON.parse(init.body as string)
-      expect(body.model).toBe('claude-opus-4-1')
+      expect(body.model).toBe('claude-opus-4-7')
       expect(body.max_tokens).toBe(8192)
     })
   })
