@@ -70,13 +70,35 @@ export const CreateClientSchema = z.object({
 // Invoice
 export const CreateInvoiceSchema = z.object({
   projectId: z.string().cuid(),
-  clientId: z.string().cuid(),
+  // clientId is optional — if omitted, the service derives it from the project.
+  // This keeps the modal simple: it sends projectId, and we extract clientId here.
+  clientId: z.string().cuid().optional(),
   milestoneLabel: z.string().min(1, 'Hito requerido'),
   amountUSD: z.number().positive('Monto debe ser positivo'),
   currency: z.enum(['USD', 'BOB']).default('USD'),
   exchangeRate: z.number().positive().default(1),
-  dueDate: z.string().datetime(),
+  dueDate: z.string(),
   notes: z.string().optional(),
+  lineItems: z.array(z.object({
+    description: z.string(),
+    quantity: z.number().positive(),
+    unitPriceUSD: z.number().positive(),
+  })).optional(),
+})
+
+export const UpdateInvoiceSchema = z.object({
+  milestoneLabel: z.string().optional(),
+  amountUSD: z.number().positive().optional(),
+  currency: z.enum(['USD', 'BOB']).optional(),
+  exchangeRate: z.number().positive().optional(),
+  dueDate: z.string().datetime().optional(),
+  notes: z.string().optional(),
+})
+
+export const CreatePaymentSchema = z.object({
+  amountUSD: z.number().positive(),
+  method: z.string().optional(),
+  reference: z.string().optional(),
 })
 
 export const UpdateInvoiceStatusSchema = z.object({
