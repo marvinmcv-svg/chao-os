@@ -1,8 +1,10 @@
 import { NextRequest } from 'next/server'
-import { auth } from '@/lib/auth'
+import { withApiHandler } from '@/lib/api-handler'
+import { requireAuth } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
-import { getPresignedUploadUrl, getPresignedDownloadUrl, deleteObject } from '@/lib/s3'
+import { getPresignedUploadUrl } from '@/lib/s3'
 import { z } from 'zod'
+import { DomainError, NotFoundError, ValidationError } from '@/lib/result'
 
 // Allowed MIME types
 const ALLOWED_MIME_TYPES = new Set([
@@ -27,68 +29,22 @@ const CreateDocumentSchema = z.object({
 
 // ── POST — Create document record + presigned upload URL ───────────────────────
 
-export async function POST(req: NextRequest) {
-  try {
-    const session = await auth()
-    if (!session) {
-      return Response.json(
-        { success: false, error: { code: 'UNAUTHORIZED', message: 'No autenticado' } },
-        { status: 401 }
-      )
-    }
-
-    const body = await req.json()
-    const parsed = CreateDocumentSchema.safeParse(body)
-
-    if (!parsed.success) {
-      return Response.json(
-        {
-          success: false,
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Datos inválidos',
-            field: parsed.error.issues[0].path.join('.'),
-          },
-        },
-        { status: 400 }
-      )
-    }
-
-    const { projectId, phase, filename, mimeType, sizeBytes } = parsed.data
+export const POST = withApiHandler(
+  async (req: NextRequest) => {
+    const user = await requireAuth()
+    const parsed = CreateDocumentSchema.parse(await req.json())
+    const { projectId, phase, filename, mimeType, sizeBytes } = parsed
 
     if (!ALLOWED_MIME_TYPES.has(mimeType)) {
-      return Response.json(
-        {
-          success: false,
-          error: {
-            code: 'INVALID_MIME_TYPE',
-            message: `Tipo de archivo no permitido: ${mimeType}`,
-          },
-        },
-        { status: 400 }
-      )
+      throw new DomainError('INVALID_MIME_TYPE', `Tipo de archivo no permitido: ${mimeType}`)
     }
 
     if (sizeBytes > MAX_SIZE_BYTES) {
-      return Response.json(
-        {
-          success: false,
-          error: {
-            code: 'FILE_TOO_LARGE',
-            message: `El archivo excede el límite de 50 MB`,
-          },
-        },
-        { status: 400 }
-      )
+      throw new DomainError('FILE_TOO_LARGE', 'El archivo excede el límite de 50 MB')
     }
 
     const project = await prisma.project.findUnique({ where: { id: projectId } })
-    if (!project) {
-      return Response.json(
-        { success: false, error: { code: 'NOT_FOUND', message: 'Proyecto no encontrado' } },
-        { status: 404 }
-      )
-    }
+    if (!project) throw new NotFoundError('Project', projectId)
 
     // Generate CUID for this document's S3 object
     const docId = crypto.randomUUID()
@@ -109,67 +65,37 @@ export async function POST(req: NextRequest) {
         mimeType,
         sizeBytes,
         status: 'PENDING',
-        uploadedById: session.user.id,
+        uploadedById: user.id,
       },
     })
 
-    return Response.json(
-      {
-        success: true,
-        data: {
-          documentId: document.id,
-          uploadUrl,
-          fileKey,
-          expiresAt,
-        },
-      },
-      { status: 201 }
-    )
-  } catch (error) {
-    console.error('POST /api/documents error:', error)
-    return Response.json(
-      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Error interno' } },
-      { status: 500 }
-    )
-  }
-}
+    return {
+      documentId: document.id,
+      uploadUrl,
+      fileKey,
+      expiresAt,
+    }
+  },
+  { status: 201 },
+)
 
 // ── GET — List documents for a project ──────────────────────────────────────
 
-export async function GET(req: NextRequest) {
-  try {
-    const session = await auth()
-    if (!session) {
-      return Response.json(
-        { success: false, error: { code: 'UNAUTHORIZED', message: 'No autenticado' } },
-        { status: 401 }
-      )
-    }
+export const GET = withApiHandler(async (req: NextRequest) => {
+  await requireAuth()
 
-    const { searchParams } = new URL(req.url)
-    const projectId = searchParams.get('projectId')
+  const { searchParams } = new URL(req.url)
+  const projectId = searchParams.get('projectId')
 
-    if (!projectId) {
-      return Response.json(
-        { success: false, error: { code: 'VALIDATION_ERROR', message: 'projectId es requerido' } },
-        { status: 400 }
-      )
-    }
-
-    const documents = await prisma.document.findMany({
-      where: { projectId },
-      include: {
-        uploadedBy: { select: { id: true, name: true, avatarInitials: true } },
-      },
-      orderBy: { uploadedAt: 'desc' },
-    })
-
-    return Response.json({ success: true, data: documents })
-  } catch (error) {
-    console.error('GET /api/documents error:', error)
-    return Response.json(
-      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Error interno' } },
-      { status: 500 }
-    )
+  if (!projectId) {
+    throw new ValidationError('projectId es requerido', 'projectId')
   }
-}
+
+  return prisma.document.findMany({
+    where: { projectId },
+    include: {
+      uploadedBy: { select: { id: true, name: true, avatarInitials: true } },
+    },
+    orderBy: { uploadedAt: 'desc' },
+  })
+})

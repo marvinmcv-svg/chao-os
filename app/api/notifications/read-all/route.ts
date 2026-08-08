@@ -1,29 +1,16 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
+import { NextRequest } from 'next/server'
+import { withApiHandler } from '@/lib/api-handler'
+import { requireAuth } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 
-// PATCH /api/notifications/read-all — mark all notifications as read
-export async function PATCH(_request: NextRequest) {
-  try {
-    const session = await auth()
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { success: false, error: { code: 'UNAUTHORIZED', message: 'No autenticado' } },
-        { status: 401 }
-      )
-    }
+// PATCH /api/notifications/read-all — mark all of the user's notifications as read
+export const PATCH = withApiHandler(async (_request: NextRequest) => {
+  const user = await requireAuth()
 
-    const result = await prisma.notification.updateMany({
-      where: { userId: session.user.id, read: false },
-      data: { read: true },
-    })
+  const result = await prisma.notification.updateMany({
+    where: { userId: user.id, read: false },
+    data: { read: true },
+  })
 
-    return NextResponse.json({ success: true, data: { count: result.count } })
-  } catch (error) {
-    console.error('[PATCH /api/notifications/read-all]', error)
-    return NextResponse.json(
-      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Error interno' } },
-      { status: 500 }
-    )
-  }
-}
+  return { count: result.count }
+})

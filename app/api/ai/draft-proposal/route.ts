@@ -1,28 +1,21 @@
 import { NextRequest } from 'next/server'
-import { auth } from '@/lib/auth'
+import { withApiHandler } from '@/lib/api-handler'
+import { requireAuth } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { generateProposalDraft, type ProjectContext } from '@/lib/claude'
 import { proposalStore } from '@/lib/proposal-store'
+import { NotFoundError, ValidationError } from '@/lib/result'
 
 // POST /api/ai/draft-proposal — generate a proposal draft for a lead
-export async function POST(req: NextRequest) {
-  try {
-    const session = await auth()
-    if (!session) {
-      return Response.json(
-        { success: false, error: { code: 'UNAUTHORIZED', message: 'No autenticado' } },
-        { status: 401 }
-      )
-    }
+export const POST = withApiHandler(
+  async (req: NextRequest) => {
+    await requireAuth()
 
     const body = await req.json()
     const { leadId } = body
 
     if (!leadId) {
-      return Response.json(
-        { success: false, error: { code: 'BAD_REQUEST', message: 'leadId es requerido', field: 'leadId' } },
-        { status: 400 }
-      )
+      throw new ValidationError('leadId es requerido', 'leadId')
     }
 
     // 1. Fetch lead
@@ -40,12 +33,7 @@ export async function POST(req: NextRequest) {
       },
     })
 
-    if (!lead) {
-      return Response.json(
-        { success: false, error: { code: 'NOT_FOUND', message: 'Lead no encontrado' } },
-        { status: 404 }
-      )
-    }
+    if (!lead) throw new NotFoundError('Lead', leadId)
 
     // 2. Build context for Claude
     const firmInfo = {
@@ -118,20 +106,12 @@ export async function POST(req: NextRequest) {
     const generatedAt = new Date().toISOString()
     proposalStore.set(leadId, { proposalId, leadId, content: proposalText, generatedAt })
 
-    return Response.json({
-      success: true,
-      data: {
-        proposalId,
-        leadId,
-        content: proposalText,
-        generatedAt,
-      },
-    }, { status: 201 })
-  } catch (error) {
-    console.error('POST /api/ai/draft-proposal error:', error)
-    return Response.json(
-      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Error al generar la propuesta' } },
-      { status: 500 }
-    )
-  }
-}
+    return {
+      proposalId,
+      leadId,
+      content: proposalText,
+      generatedAt,
+    }
+  },
+  { status: 201 },
+)

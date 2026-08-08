@@ -1,51 +1,28 @@
 import { NextRequest } from 'next/server'
-import { auth } from '@/lib/auth'
+import { withApiHandler } from '@/lib/api-handler'
+import { requireAuth } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
+import { ConflictError, ForbiddenError, NotFoundError } from '@/lib/result'
 
 // POST /api/documents/[id]/approve — admin only
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  try {
-    const session = await auth()
-    if (!session) {
-      return Response.json(
-        { success: false, error: { code: 'UNAUTHORIZED', message: 'No autenticado' } },
-        { status: 401 }
-      )
-    }
+export const POST = withApiHandler(
+  async (_req: NextRequest, { params }: { params: { id: string } }) => {
+    const user = await requireAuth()
 
-    if (session.user.role !== 'ADMIN') {
-      return Response.json(
-        { success: false, error: { code: 'FORBIDDEN', message: 'Solo admins pueden aprobar documentos' } },
-        { status: 403 }
-      )
+    if (user.role !== 'ADMIN') {
+      throw new ForbiddenError('Solo admins pueden aprobar documentos')
     }
 
     const document = await prisma.document.findUnique({ where: { id: params.id } })
-    if (!document) {
-      return Response.json(
-        { success: false, error: { code: 'NOT_FOUND', message: 'Documento no encontrado' } },
-        { status: 404 }
-      )
-    }
+    if (!document) throw new NotFoundError('Document', params.id)
 
     if (document.status === 'APPROVED') {
-      return Response.json(
-        { success: false, error: { code: 'CONFLICT', message: 'Documento ya está aprobado' } },
-        { status: 409 }
-      )
+      throw new ConflictError('Documento ya está aprobado')
     }
 
-    const updated = await prisma.document.update({
+    return prisma.document.update({
       where: { id: params.id },
       data: { status: 'APPROVED' },
     })
-
-    return Response.json({ success: true, data: updated })
-  } catch (error) {
-    console.error('POST /api/documents/[id]/approve error:', error)
-    return Response.json(
-      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Error interno' } },
-      { status: 500 }
-    )
-  }
-}
+  },
+)

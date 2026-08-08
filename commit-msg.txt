@@ -1,0 +1,21 @@
+refactor: Sprint 2.8 - wrap remaining routes with withApiHandler (batch 2)
+
+Apply the uniform handler pattern to the remaining internal routes so
+every /api/* endpoint shares the same auth + error contract:
+
+- ai/alerts, ai/income-forecast, ai/draft-proposal (+[id]): inline logic
+  preserved, auth via requireAuth, error codes preserved
+  (INVALID_MIME_TYPE / FILE_TOO_LARGE kept via DomainError)
+- dashboard/alerts, dashboard/activity, dashboard/kpis
+- finance/pnl, finance/cashflow
+- clients (GET/POST 201)
+- documents (+[id], approve, reject): admin guards -> ForbiddenError,
+  duplicate-status checks -> ConflictError, S3 delete stays non-fatal
+- team (+[id]): ADMIN/PRINCIPAL update guard -> ForbiddenError
+- notifications (+[id]/read, read-all): async params (Next 15) preserved
+
+Intentional exceptions (non-JSON responses, kept as-is):
+- app/api/ai/chat (SSE stream), invoices/[id]/pdf (binary PDF),
+  auth/[...nextauth] (NextAuth), portal/* (portal token auth)
+
+324/324 tests passing, typecheck + lint clean.

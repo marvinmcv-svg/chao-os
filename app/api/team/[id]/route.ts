@@ -1,15 +1,16 @@
 import { NextRequest } from 'next/server'
-import { auth } from '@/lib/auth'
+import { withApiHandler } from '@/lib/api-handler'
+import { requireAuth } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { z } from 'zod'
+import { ForbiddenError, NotFoundError } from '@/lib/result'
+
+const UPDATE_ROLES = new Set(['ADMIN', 'PRINCIPAL'])
 
 // GET /api/team/:id — full capacity detail for one team member
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  try {
-    const session = await auth()
-    if (!session) {
-      return Response.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'No autenticado' } }, { status: 401 })
-    }
+export const GET = withApiHandler(
+  async (_req: NextRequest, { params }: { params: { id: string } }) => {
+    await requireAuth()
 
     const member = await prisma.teamMember.findUnique({
       where: { id: params.id },
@@ -19,10 +20,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         },
       },
     })
-
-    if (!member) {
-      return Response.json({ success: false, error: { code: 'NOT_FOUND', message: 'Miembro no encontrado' } }, { status: 404 })
-    }
+    if (!member) throw new NotFoundError('TeamMember', params.id)
 
     const now = new Date()
     const dayOfWeek = now.getDay()
@@ -51,20 +49,14 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       return due <= weekFromNow
     })
 
-    return Response.json({
-      success: true,
-      data: {
-        ...member,
-        weeklyHoursLogged: weeklyHours,
-        upcomingDeadlines,
-        weekEntries,
-      },
-    })
-  } catch (error) {
-    console.error('GET /api/team/:id error:', error)
-    return Response.json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Error interno' } }, { status: 500 })
-  }
-}
+    return {
+      ...member,
+      weeklyHoursLogged: weeklyHours,
+      upcomingDeadlines,
+      weekEntries,
+    }
+  },
+)
 
 const UpdateTeamMemberSchema = z.object({
   role: z.string().optional(),
@@ -74,39 +66,26 @@ const UpdateTeamMemberSchema = z.object({
 })
 
 // PUT /api/team/:id — update role, startDate, hourlyRate, weeklyHoursCapacity
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
-  try {
-    const session = await auth()
-    if (!session) {
-      return Response.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'No autenticado' } }, { status: 401 })
+export const PUT = withApiHandler(
+  async (req: NextRequest, { params }: { params: { id: string } }) => {
+    const user = await requireAuth()
+
+    if (!UPDATE_ROLES.has(user.role)) {
+      throw new ForbiddenError('Sin permiso')
     }
 
-    if (!['ADMIN', 'PRINCIPAL'].includes(session.user.role)) {
-      return Response.json({ success: false, error: { code: 'FORBIDDEN', message: 'Sin permiso' } }, { status: 403 })
-    }
+    const data = UpdateTeamMemberSchema.parse(await req.json())
 
-    const body = await req.json()
-    const parsed = UpdateTeamMemberSchema.safeParse(body)
-    if (!parsed.success) {
-      return Response.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Datos inválidos' } }, { status: 400 })
-    }
-
-    const data = parsed.data
-    const updateData: any = {}
+    const updateData: Record<string, unknown> = {}
     if (data.role !== undefined) updateData.role = data.role
     if (data.startDate !== undefined) updateData.startDate = new Date(data.startDate)
     if (data.hourlyRate !== undefined) updateData.hourlyRate = data.hourlyRate
     if (data.weeklyHoursCapacity !== undefined) updateData.weeklyHoursCapacity = data.weeklyHoursCapacity
 
-    const member = await prisma.teamMember.update({
+    return prisma.teamMember.update({
       where: { id: params.id },
       data: updateData,
       include: { user: { select: { id: true, name: true, avatarInitials: true, role: true } } },
     })
-
-    return Response.json({ success: true, data: member })
-  } catch (error) {
-    console.error('PUT /api/team/:id error:', error)
-    return Response.json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Error interno' } }, { status: 500 })
-  }
-}
+  },
+)

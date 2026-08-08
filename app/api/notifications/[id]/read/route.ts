@@ -1,36 +1,21 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
+import { NextRequest } from 'next/server'
+import { withApiHandler } from '@/lib/api-handler'
+import { requireAuth } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
+import { ForbiddenError, NotFoundError } from '@/lib/result'
 
 // PATCH /api/notifications/[id]/read — mark notification as read
-export async function PATCH(
-  _request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const session = await auth()
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { success: false, error: { code: 'UNAUTHORIZED', message: 'No autenticado' } },
-        { status: 401 }
-      )
-    }
-
+// (owner-only; Next 15 async params)
+export const PATCH = withApiHandler(
+  async (_request: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
+    const user = await requireAuth()
     const { id } = await params
 
     const notification = await prisma.notification.findUnique({ where: { id } })
-    if (!notification) {
-      return NextResponse.json(
-        { success: false, error: { code: 'NOT_FOUND', message: 'Notificación no encontrada' } },
-        { status: 404 }
-      )
-    }
+    if (!notification) throw new NotFoundError('Notification', id)
 
-    if (notification.userId !== session.user.id) {
-      return NextResponse.json(
-        { success: false, error: { code: 'FORBIDDEN', message: 'No tienes acceso a esta notificación' } },
-        { status: 403 }
-      )
+    if (notification.userId !== user.id) {
+      throw new ForbiddenError('No tienes acceso a esta notificación')
     }
 
     const updated = await prisma.notification.update({
@@ -38,12 +23,6 @@ export async function PATCH(
       data: { read: true },
     })
 
-    return NextResponse.json({ success: true, data: { notification: updated } })
-  } catch (error) {
-    console.error('[PATCH /api/notifications/[id]/read]', error)
-    return NextResponse.json(
-      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Error interno' } },
-      { status: 500 }
-    )
-  }
-}
+    return { notification: updated }
+  },
+)

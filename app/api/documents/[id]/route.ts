@@ -1,28 +1,16 @@
 import { NextRequest } from 'next/server'
-import { auth } from '@/lib/auth'
+import { withApiHandler } from '@/lib/api-handler'
+import { requireAuth } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { getPresignedDownloadUrl, deleteObject } from '@/lib/s3'
+import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/result'
 
-// Allowed MIME types
-const ALLOWED_MIME_TYPES = new Set([
-  'application/pdf',
-  'image/png',
-  'image/jpeg',
-  'application/octet-stream',
-])
-
-const MAX_SIZE_BYTES = 50 * 1024 * 1024
-
-// GET /api/documents/[id]
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  try {
-    const session = await auth()
-    if (!session) {
-      return Response.json(
-        { success: false, error: { code: 'UNAUTHORIZED', message: 'No autenticado' } },
-        { status: 401 }
-      )
-    }
+// GET /api/documents/[id] — single document + presigned download URL
+// (APPROVED documents are downloadable by anyone; PENDING/REJECTED only
+// by the uploader or an ADMIN)
+export const GET = withApiHandler(
+  async (_req: NextRequest, { params }: { params: { id: string } }) => {
+    const user = await requireAuth()
 
     const document = await prisma.document.findUnique({
       where: { id: params.id },
@@ -30,139 +18,70 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         uploadedBy: { select: { id: true, name: true, avatarInitials: true } },
       },
     })
+    if (!document) throw new NotFoundError('Document', params.id)
 
-    if (!document) {
-      return Response.json(
-        { success: false, error: { code: 'NOT_FOUND', message: 'Documento no encontrado' } },
-        { status: 404 }
-      )
-    }
-
-    // Generate presigned download URL (only for APPROVED documents, or if user owns it)
     let downloadUrl: string | null = null
     const canDownload =
       document.status === 'APPROVED' ||
-      document.uploadedById === session.user.id ||
-      session.user.role === 'ADMIN'
+      document.uploadedById === user.id ||
+      user.role === 'ADMIN'
 
     if (canDownload) {
       const result = await getPresignedDownloadUrl(document.url)
       downloadUrl = result.downloadUrl
     }
 
-    return Response.json({
-      success: true,
-      data: {
-        ...document,
-        downloadUrl,
-      },
-    })
-  } catch (error) {
-    console.error('GET /api/documents/[id] error:', error)
-    return Response.json(
-      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Error interno' } },
-      { status: 500 }
-    )
-  }
-}
+    return { ...document, downloadUrl }
+  },
+)
 
 // PATCH /api/documents/[id] — update status (admin only)
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  try {
-    const session = await auth()
-    if (!session) {
-      return Response.json(
-        { success: false, error: { code: 'UNAUTHORIZED', message: 'No autenticado' } },
-        { status: 401 }
-      )
-    }
+export const PATCH = withApiHandler(
+  async (req: NextRequest, { params }: { params: { id: string } }) => {
+    const user = await requireAuth()
 
-    // Only admins can change status
-    if (session.user.role !== 'ADMIN') {
-      return Response.json(
-        { success: false, error: { code: 'FORBIDDEN', message: 'Solo admins pueden cambiar el estado' } },
-        { status: 403 }
-      )
+    if (user.role !== 'ADMIN') {
+      throw new ForbiddenError('Solo admins pueden cambiar el estado')
     }
 
     const body = await req.json()
     const { status } = body
 
     if (!status || !['PENDING', 'APPROVED', 'REJECTED'].includes(status)) {
-      return Response.json(
-        {
-          success: false,
-          error: { code: 'VALIDATION_ERROR', message: 'status inválido' },
-        },
-        { status: 400 }
-      )
+      throw new ValidationError('status inválido', 'status')
     }
 
     const document = await prisma.document.findUnique({ where: { id: params.id } })
-    if (!document) {
-      return Response.json(
-        { success: false, error: { code: 'NOT_FOUND', message: 'Documento no encontrado' } },
-        { status: 404 }
-      )
-    }
+    if (!document) throw new NotFoundError('Document', params.id)
 
-    const updated = await prisma.document.update({
+    return prisma.document.update({
       where: { id: params.id },
       data: { status },
     })
-
-    return Response.json({ success: true, data: updated })
-  } catch (error) {
-    console.error('PATCH /api/documents/[id] error:', error)
-    return Response.json(
-      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Error interno' } },
-      { status: 500 }
-    )
-  }
-}
+  },
+)
 
 // DELETE /api/documents/[id] — remove from S3 + DB (admin only)
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
-  try {
-    const session = await auth()
-    if (!session) {
-      return Response.json(
-        { success: false, error: { code: 'UNAUTHORIZED', message: 'No autenticado' } },
-        { status: 401 }
-      )
-    }
+export const DELETE = withApiHandler(
+  async (_req: NextRequest, { params }: { params: { id: string } }) => {
+    const user = await requireAuth()
 
-    if (session.user.role !== 'ADMIN') {
-      return Response.json(
-        { success: false, error: { code: 'FORBIDDEN', message: 'Solo admins pueden eliminar documentos' } },
-        { status: 403 }
-      )
+    if (user.role !== 'ADMIN') {
+      throw new ForbiddenError('Solo admins pueden eliminar documentos')
     }
 
     const document = await prisma.document.findUnique({ where: { id: params.id } })
-    if (!document) {
-      return Response.json(
-        { success: false, error: { code: 'NOT_FOUND', message: 'Documento no encontrado' } },
-        { status: 404 }
-      )
-    }
+    if (!document) throw new NotFoundError('Document', params.id)
 
-    // Delete from S3
+    // Delete from S3 (non-fatal on failure — record removal is the source of truth)
     try {
       await deleteObject(document.url)
     } catch (s3Err) {
       console.error('S3 delete error (non-fatal):', s3Err)
     }
 
-    // Delete DB record
     await prisma.document.delete({ where: { id: params.id } })
 
-    return Response.json({ success: true, data: { deletedId: params.id } })
-  } catch (error) {
-    console.error('DELETE /api/documents/[id] error:', error)
-    return Response.json(
-      { success: false, error: { code: 'INTERNAL_ERROR', message: 'Error interno' } },
-      { status: 500 }
-    )
-  }
-}
+    return { deletedId: params.id }
+  },
+)
