@@ -127,8 +127,8 @@ export const CreateTimeEntrySchema = z.object({
   phaseId: z.string().cuid().optional(),
   taskId: z.string().cuid().optional(),
   description: z.string().min(1, 'Descripción requerida'),
-  hours: z.number().positive('Horas debe ser positivo'),
-  date: z.string().datetime(),
+  hours: z.number().positive('Horas debe ser positivo').max(24, 'Máximo 24 horas'),
+  date: z.string(),
 })
 
 // Expense
