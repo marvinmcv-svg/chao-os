@@ -20,6 +20,7 @@
  */
 
 import { auth } from './auth'
+import type { AuthUser } from './auth'
 import { DomainError } from './result'
 
 export class UnauthorizedError extends DomainError {
@@ -31,9 +32,14 @@ export class UnauthorizedError extends DomainError {
 /**
  * Returns the current session user, or throws `UnauthorizedError`.
  * Use in any route handler that requires authentication.
+ *
+ * The cast to `AuthUser` is safe: `authorizeCredentials` always sets
+ * `email`/`name` and the session callback restores `id`, `role`, and
+ * `avatarInitials` from the JWT — the wider nullable types are NextAuth's
+ * interface defaults, not runtime possibilities here.
  */
-export async function requireAuth() {
+export async function requireAuth(): Promise<AuthUser> {
   const session = await auth()
   if (!session?.user) throw new UnauthorizedError()
-  return session.user
+  return session.user as AuthUser
 }

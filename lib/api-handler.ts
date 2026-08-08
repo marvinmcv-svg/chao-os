@@ -39,14 +39,21 @@ interface ApiErrorBody {
 /**
  * Wrap an async handler so its return value becomes a success response
  * and any thrown error becomes a typed error response.
+ *
+ * The optional `status` option sets the success status (default 200) —
+ * create endpoints that historically returned 201 keep doing so.
  */
 export function withApiHandler<TArgs extends unknown[], TResponse>(
-  handler: (...args: TArgs) => Promise<TResponse>
+  handler: (...args: TArgs) => Promise<TResponse>,
+  options?: { status?: number }
 ): (...args: TArgs) => Promise<NextResponse> {
   return async (...args: TArgs) => {
     try {
       const data = await handler(...args)
-      return NextResponse.json({ success: true, data })
+      return NextResponse.json(
+        { success: true, data },
+        { status: options?.status ?? 200 }
+      )
     } catch (error) {
       return errorToResponse(error)
     }
