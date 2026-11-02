@@ -1,28 +1,22 @@
 export default function PortalLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-white">
-      {/* Portal Header */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
-        <div className="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div>
-            <span className="font-serif text-xl text-gray-900">CHAO Arquitectura</span>
-            <span className="ml-2 text-xs text-gray-400 font-mono">Client Portal</span>
+    <div className="min-h-screen flex flex-col">
+      <header className="border-b border-g80 bg-g95/80 backdrop-blur sticky top-0 z-50">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden className="text-accent">
+              <rect x="1" y="1" width="20" height="20" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M1 21 A 12 12 0 0 1 13 9" stroke="currentColor" strokeWidth="1" strokeDasharray="2 2" />
+              <path d="M13 9 V 21" stroke="currentColor" strokeWidth="1.5" />
+            </svg>
+            <span className="font-display text-xl text-white">CHAO Arquitectura</span>
           </div>
-          <div className="text-right">
-            <p className="text-sm font-medium text-gray-900" id="portal-client-name">Bienvenido</p>
-            <p className="text-xs text-gray-400" id="portal-company-name">Portal del Cliente</p>
-          </div>
+          <span className="text-2xs font-mono text-g40 uppercase tracking-[0.2em]">Portal del cliente</span>
         </div>
       </header>
-
-      {/* Content */}
-      <main className="max-w-5xl mx-auto px-6 py-8">
-        {children}
-      </main>
-
-      {/* Footer */}
-      <footer className="border-t border-gray-200 mt-16">
-        <div className="max-w-5xl mx-auto px-6 py-6 text-center text-xs text-gray-400">
+      <main className="flex-1 w-full max-w-5xl mx-auto px-4 sm:px-6 py-10">{children}</main>
+      <footer className="border-t border-g80">
+        <div className="max-w-5xl mx-auto px-6 py-6 text-center text-2xs font-mono text-g50">
           CHAO Arquitectura S.R.L. · Santa Cruz de la Sierra, Bolivia · © {new Date().getFullYear()}
         </div>
       </footer>

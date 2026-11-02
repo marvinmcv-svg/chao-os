@@ -4,7 +4,7 @@ import { requireAuth } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
 import { getPresignedUploadUrl } from '@/lib/s3'
 import { z } from 'zod'
-import { DomainError, NotFoundError, ValidationError } from '@/lib/result'
+import { DomainError, NotFoundError } from '@/lib/result'
 
 // Allowed MIME types
 const ALLOWED_MIME_TYPES = new Set([
@@ -79,23 +79,25 @@ export const POST = withApiHandler(
   { status: 201 },
 )
 
-// ── GET — List documents for a project ──────────────────────────────────────
+// ── GET — List documents for a project (or the latest across all projects) ──
 
 export const GET = withApiHandler(async (req: NextRequest) => {
   await requireAuth()
 
   const { searchParams } = new URL(req.url)
   const projectId = searchParams.get('projectId')
-
-  if (!projectId) {
-    throw new ValidationError('projectId es requerido', 'projectId')
-  }
+  const status = searchParams.get('status')
 
   return prisma.document.findMany({
-    where: { projectId },
+    where: {
+      ...(projectId ? { projectId } : {}),
+      ...(status && ['PENDING', 'APPROVED', 'REJECTED'].includes(status) ? { status: status as 'PENDING' | 'APPROVED' | 'REJECTED' } : {}),
+    },
     include: {
       uploadedBy: { select: { id: true, name: true, avatarInitials: true } },
+      project: { select: { id: true, code: true, name: true } },
     },
     orderBy: { uploadedAt: 'desc' },
+    take: projectId ? undefined : 200,
   })
 })

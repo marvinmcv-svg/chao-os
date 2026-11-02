@@ -1,30 +1,26 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, GripVertical, ArrowRight, CheckCircle, XCircle } from 'lucide-react'
+import { Plus, CheckCircle2, XCircle } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
-import { Button } from '@/components/ui/Button'
-import { formatCurrency } from '@/lib/utils'
+import { Avatar } from '@/components/ui/Avatar'
+import { Skeleton } from '@/components/ui/EmptyState'
+import { api } from '@/lib/api-client'
+import { PIPELINE_STAGE } from '@/lib/labels'
+import { cn, formatCompact } from '@/lib/utils'
 
-const STAGES = [
-  { id: 'PROSPECT', label: 'Prospecto', color: 'g60' },
-  { id: 'QUALIFIED', label: 'Calificado', color: 'blue' },
-  { id: 'PROPOSAL', label: 'Propuesta', color: 'yellow' },
-  { id: 'NEGOTIATION', label: 'Negociación', color: 'yellow' },
-  { id: 'WON', label: 'Cerrado Ganado', color: 'green' },
-  { id: 'LOST', label: 'Cerrado Perdido', color: 'red' },
-]
+const STAGES = ['PROSPECT', 'QUALIFIED', 'PROPOSAL', 'NEGOTIATION', 'WON', 'LOST'] as const
 
-const STAGE_COLORS: Record<string, string> = {
-  PROSPECT: 'border-g60',
-  QUALIFIED: 'border-blue-500/50',
-  PROPOSAL: 'border-yellow-500/50',
-  NEGOTIATION: 'border-yellow-500/50',
-  WON: 'border-green-500/50',
-  LOST: 'border-red-500/50',
+const STAGE_DOT: Record<string, string> = {
+  PROSPECT: 'bg-g40',
+  QUALIFIED: 'bg-blue-400',
+  PROPOSAL: 'bg-yellow-400',
+  NEGOTIATION: 'bg-orange-400',
+  WON: 'bg-green-400',
+  LOST: 'bg-red-400',
 }
 
-interface Lead {
+export interface KanbanLead {
   id: string
   projectName: string
   company: string
@@ -40,223 +36,166 @@ interface Lead {
 }
 
 interface Props {
-  onCardClick: (lead: Lead) => void
+  onCardClick: (lead: KanbanLead) => void
   onNewLead: () => void
   refreshTrigger: number
+  filter?: string
 }
 
-export function KanbanBoard({ onCardClick, onNewLead, refreshTrigger }: Props) {
-  const [leads, setLeads] = useState<Lead[]>([])
-  const [loading, setLoading] = useState(true)
-  const [draggedLead, setDraggedLead] = useState<Lead | null>(null)
-  const [dragOverStage, setDragOverStage] = useState<string | null>(null)
+export function KanbanBoard({ onCardClick, onNewLead, refreshTrigger, filter = '' }: Props) {
+  const [leads, setLeads] = useState<KanbanLead[] | null>(null)
+  const [dragged, setDragged] = useState<KanbanLead | null>(null)
+  const [overStage, setOverStage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   const fetchLeads = useCallback(async () => {
     try {
-      const res = await fetch('/api/leads')
-      const json = await res.json()
-      if (json.success) setLeads(json.data)
+      setLeads(await api<KanbanLead[]>('/api/leads'))
     } catch (e) {
-      console.error('Failed to fetch leads', e)
-    } finally {
-      setLoading(false)
+      setError(e instanceof Error ? e.message : 'Error al cargar el pipeline')
+      setLeads([])
     }
   }, [])
 
-  useEffect(() => {
-    fetchLeads()
-  }, [fetchLeads, refreshTrigger])
+  useEffect(() => { fetchLeads() }, [fetchLeads, refreshTrigger])
 
-  const moveToStage = useCallback(async (leadId: string, newStage: string, newSortOrder: number) => {
+  const moveToStage = useCallback(async (lead: KanbanLead, stage: string, sortOrder: number) => {
+    // optimistic
+    setLeads((prev) => prev?.map((l) => (l.id === lead.id ? { ...l, pipelineStage: stage, sortOrder, closeProbability: stage === 'WON' ? 100 : stage === 'LOST' ? 0 : l.closeProbability } : l)) ?? prev)
     try {
-      const res = await fetch(`/api/leads/${leadId}/stage`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pipelineStage: newStage, sortOrder: newSortOrder }),
-      })
-      const json = await res.json()
-      if (json.success) {
-        setLeads(prev => prev.map(l => l.id === leadId ? { ...l, pipelineStage: newStage, sortOrder: newSortOrder } : l))
-      }
+      await api(`/api/leads/${lead.id}/stage`, { method: 'PATCH', body: JSON.stringify({ pipelineStage: stage, sortOrder }) })
     } catch (e) {
-      console.error('Failed to move lead', e)
+      setError(e instanceof Error ? e.message : 'No se pudo mover el lead')
       fetchLeads()
     }
   }, [fetchLeads])
 
-  // Drag handlers
-  const handleDragStart = useCallback((e: React.DragEvent, lead: Lead) => {
-    setDraggedLead(lead)
-    e.dataTransfer.effectAllowed = 'move'
-    e.dataTransfer.setData('text/plain', lead.id)
-  }, [])
+  const q = filter.trim().toLowerCase()
+  const visible = (leads ?? []).filter((l) => !q || l.projectName.toLowerCase().includes(q) || l.company.toLowerCase().includes(q) || l.contactName.toLowerCase().includes(q))
 
-  const handleDragOver = useCallback((e: React.DragEvent, stageId: string) => {
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
-    setDragOverStage(stageId)
-  }, [])
-
-  const handleDragLeave = useCallback(() => {
-    setDragOverStage(null)
-  }, [])
-
-  const handleDrop = useCallback((e: React.DragEvent, targetStage: string) => {
-    e.preventDefault()
-    setDragOverStage(null)
-    if (!draggedLead) return
-    if (draggedLead.pipelineStage === targetStage) {
-      setDraggedLead(null)
-      return
-    }
-    const leadsInTarget = leads.filter(l => l.pipelineStage === targetStage)
-    const newSortOrder = leadsInTarget.length > 0 ? Math.max(...leadsInTarget.map(l => l.sortOrder)) + 1 : 0
-    moveToStage(draggedLead.id, targetStage, newSortOrder)
-    setDraggedLead(null)
-  }, [draggedLead, leads, moveToStage])
-
-  function getLeadsForStage(stage: string) {
-    return leads
-      .filter(l => l.pipelineStage === stage)
-      .sort((a, b) => a.sortOrder - b.sortOrder)
-  }
-
-  function AIBadge({ score, recommendation }: { score: number | null; recommendation: string | null }) {
-    if (!score) return null
-    const variant = recommendation === 'GO' ? 'green' : recommendation === 'NO_GO' ? 'red' : 'yellow'
+  if (leads === null) {
     return (
-      <Badge variant={variant} className="text-xs">
-        AI {score}
-      </Badge>
-    )
-  }
-
-  function ClosedBadge({ stage, converted }: { stage: string; converted: Lead['convertedToProject'] }) {
-    if (stage === 'WON') {
-      return (
-        <div className="flex items-center gap-1">
-          <CheckCircle className="w-3 h-3 text-green-400" />
-          <span className="text-xs text-green-400">
-            {converted ? `→ ${converted.code}` : 'Convertido'}
-          </span>
-        </div>
-      )
-    }
-    if (stage === 'LOST') {
-      return (
-        <div className="flex items-center gap-1">
-          <XCircle className="w-3 h-3 text-red-400" />
-          <span className="text-xs text-red-400">Perdido</span>
-        </div>
-      )
-    }
-    return null
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-g40 text-sm font-mono">Cargando pipeline...</p>
+      <div className="grid grid-flow-col auto-cols-[minmax(176px,1fr)] gap-3 overflow-x-auto">
+        {STAGES.map((s) => <Skeleton key={s} className="h-80 rounded-lg" />)}
       </div>
     )
   }
 
   return (
-    <div className="flex gap-4 overflow-x-auto pb-4" style={{ minHeight: '500px' }}>
-      {STAGES.map(stage => {
-        const stageLeads = getLeadsForStage(stage.id)
-        const isDropTarget = dragOverStage === stage.id && draggedLead?.pipelineStage !== stage.id
-
-        return (
-          <div
-            key={stage.id}
-            className={`flex-shrink-0 w-[280px] rounded-md transition-colors ${
-              isDropTarget ? 'bg-g80 ring-2 ring-blue-500/50' : ''
-            }`}
-            onDragOver={e => handleDragOver(e, stage.id)}
-            onDragLeave={handleDragLeave}
-            onDrop={e => handleDrop(e, stage.id)}
-          >
-            {/* Column header */}
-            <div className="flex items-center justify-between mb-3 px-1">
-              <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${
-                  stage.id === 'WON' ? 'bg-green-400' :
-                  stage.id === 'LOST' ? 'bg-red-400' :
-                  stage.id === 'QUALIFIED' ? 'bg-blue-400' :
-                  stage.id === 'NEGOTIATION' ? 'bg-yellow-400' :
-                  stage.id === 'PROPOSAL' ? 'bg-yellow-400' :
-                  'bg-g60'
-                }`} />
-                <span className="text-sm font-mono text-g20">{stage.label}</span>
-                <span className="text-xs font-mono text-g50 bg-g80 px-1.5 py-0.5 rounded">
-                  {stageLeads.length}
-                </span>
+    <div className="space-y-2">
+      {error && <p className="text-xs text-red-300">{error}</p>}
+      <div className="grid grid-flow-col auto-cols-[minmax(176px,1fr)] gap-3 overflow-x-auto pb-3 -mx-1 px-1">
+        {STAGES.map((stage) => {
+          const meta = PIPELINE_STAGE[stage]
+          const items = visible.filter((l) => l.pipelineStage === stage).sort((a, b) => a.sortOrder - b.sortOrder)
+          const total = items.reduce((s, l) => s + l.estimatedValueUSD, 0)
+          const weighted = items.reduce((s, l) => s + (l.estimatedValueUSD * l.closeProbability) / 100, 0)
+          const isTarget = overStage === stage && dragged?.pipelineStage !== stage
+          return (
+            <div
+              key={stage}
+              onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setOverStage(stage) }}
+              onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOverStage(null) }}
+              onDrop={(e) => {
+                e.preventDefault()
+                setOverStage(null)
+                if (!dragged || dragged.pipelineStage === stage) return setDragged(null)
+                const max = items.length ? Math.max(...items.map((l) => l.sortOrder)) + 1 : 0
+                moveToStage(dragged, stage, max)
+                setDragged(null)
+              }}
+              className={cn(
+                'flex flex-col rounded-lg border bg-g90/60 min-h-[420px] transition-colors',
+                isTarget ? 'border-accent/60 bg-accent-muted' : 'border-g80'
+              )}
+            >
+              <div className="px-3 pt-3 pb-2 border-b border-g80">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className={cn('w-2 h-2 rounded-full', STAGE_DOT[stage])} />
+                    <span className="text-sm text-g10">{meta.label}</span>
+                    <span className="text-2xs font-mono text-g40 bg-g80 px-1.5 rounded tabular">{items.length}</span>
+                  </div>
+                  {stage === 'PROSPECT' && (
+                    <button onClick={onNewLead} className="p-1 rounded text-g40 hover:text-white hover:bg-g80" aria-label="Nuevo lead">
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+                <p className="text-2xs font-mono text-g40 mt-1 tabular">
+                  {formatCompact(total)}
+                  {stage !== 'WON' && stage !== 'LOST' && total > 0 && <span className="text-g50"> · pond. {formatCompact(weighted)}</span>}
+                </p>
               </div>
-              {stage.id === 'PROSPECT' && (
-                <button
-                  onClick={onNewLead}
-                  className="p-1 text-g40 hover:text-white transition-colors"
-                  title="Nuevo lead"
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
-              )}
-            </div>
 
-            {/* Cards */}
-            <div className="space-y-2">
-              {stageLeads.map(lead => (
-                <div
-                  key={lead.id}
-                  draggable
-                  onDragStart={e => handleDragStart(e, lead)}
-                  onDragEnd={() => { setDraggedLead(null); setDragOverStage(null) }}
-                  onClick={() => onCardClick(lead)}
-                  className={`bg-g85 border ${STAGE_COLORS[stage.id]} rounded-md p-3 cursor-pointer hover:border-g60 transition-all ${
-                    draggedLead?.id === lead.id ? 'opacity-50' : ''
-                  }`}
-                >
-                  {/* Drag handle + company */}
-                  <div className="flex items-start gap-2 mb-2">
-                    <GripVertical className="w-4 h-4 text-g50 mt-0.5 flex-shrink-0 cursor-grab" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-white truncate">{lead.projectName}</p>
-                      <p className="text-xs text-g40 truncate">{lead.company}</p>
+              <div className="flex-1 p-2 space-y-2">
+                {items.map((lead) => (
+                  <div
+                    key={lead.id}
+                    role="button"
+                    tabIndex={0}
+                    draggable
+                    onDragStart={(e) => { setDragged(lead); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', lead.id) }}
+                    onDragEnd={() => { setDragged(null); setOverStage(null) }}
+                    onClick={() => onCardClick(lead)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') onCardClick(lead) }}
+                    className={cn(
+                      'group bg-g85 border border-g80 rounded-md p-3 cursor-grab active:cursor-grabbing hover:border-g60 transition-all',
+                      dragged?.id === lead.id && 'opacity-40'
+                    )}
+                  >
+                    <p className="text-sm text-white leading-snug line-clamp-2">{lead.projectName}</p>
+                    <p className="text-xs text-g40 truncate mt-0.5">{lead.company}</p>
+
+                    <div className="flex items-end justify-between mt-3">
+                      <div>
+                        <p className="text-sm font-mono text-g10 tabular">{formatCompact(lead.estimatedValueUSD)}</p>
+                        {stage !== 'WON' && stage !== 'LOST' && (
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <div className="w-12 h-1 rounded-full bg-g80 overflow-hidden">
+                              <div className="h-full bg-g30" style={{ width: `${lead.closeProbability}%` }} />
+                            </div>
+                            <span className="text-2xs font-mono text-g40 tabular">{lead.closeProbability}%</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        {lead.aiScore != null && (
+                          <Badge variant={lead.aiRecommendation === 'GO' ? 'green' : lead.aiRecommendation === 'NO_GO' ? 'red' : 'yellow'} className="normal-case">
+                            {lead.aiScore}
+                          </Badge>
+                        )}
+                        <Avatar initials={lead.assignedTo.avatarInitials} size="xs" title={lead.assignedTo.name} />
+                      </div>
                     </div>
+
+                    {stage === 'WON' && (
+                      <p className="flex items-center gap-1 mt-2 text-2xs font-mono text-green-300">
+                        <CheckCircle2 className="w-3 h-3" />
+                        {lead.convertedToProject ? `Proyecto ${lead.convertedToProject.code}` : 'Pendiente de convertir'}
+                      </p>
+                    )}
+                    {stage === 'LOST' && (
+                      <p className="flex items-center gap-1 mt-2 text-2xs font-mono text-red-300">
+                        <XCircle className="w-3 h-3" /> Perdido
+                      </p>
+                    )}
                   </div>
+                ))}
 
-                  {/* Value + probability */}
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-mono text-g20">
-                      {formatCurrency(lead.estimatedValueUSD)}
-                    </span>
-                    <span className="text-xs font-mono text-g40">
-                      {lead.closeProbability}%
-                    </span>
+                {items.length === 0 && !isTarget && (
+                  <p className="text-center text-2xs font-mono text-g50 py-6">Arrastra aquí</p>
+                )}
+                {isTarget && (
+                  <div className="border border-dashed border-accent/50 rounded-md h-16 flex items-center justify-center text-2xs font-mono text-accent">
+                    Soltar en {meta.label}
                   </div>
-
-                  {/* AI score + assigned */}
-                  <div className="flex items-center justify-between">
-                    <AIBadge score={lead.aiScore} recommendation={lead.aiRecommendation} />
-                    <span className="text-xs font-mono text-g50">{lead.assignedTo.name.split(' ')[0]}</span>
-                  </div>
-
-                  {/* Won/Lost badge */}
-                  <ClosedBadge stage={lead.pipelineStage} converted={lead.convertedToProject} />
-                </div>
-              ))}
-
-              {/* Drop indicator */}
-              {isDropTarget && (
-                <div className="border-2 border-dashed border-blue-500/30 rounded-md h-20 flex items-center justify-center">
-                  <span className="text-xs text-g50 font-mono">Soltar aquí</span>
-                </div>
-              )}
+                )}
+              </div>
             </div>
-          </div>
-        )
-      })}
+          )
+        })}
+      </div>
     </div>
   )
 }

@@ -1,25 +1,26 @@
 import { redirect } from 'next/navigation'
+import { Lock } from 'lucide-react'
 
 interface Props {
   searchParams: { token?: string; projectId?: string }
 }
 
 export default function PortalHomePage({ searchParams }: Props) {
-  // If token + projectId provided, show project status
-  // Otherwise show a simple "access the portal" message
   if (searchParams.token && searchParams.projectId) {
-    redirect(`/portal/projects/${searchParams.projectId}?token=${searchParams.token}`)
+    redirect(`/portal/projects/${encodeURIComponent(searchParams.projectId)}?token=${encodeURIComponent(searchParams.token)}`)
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+    <div className="flex items-center justify-center py-24">
       <div className="text-center max-w-md">
-        <h1 className="font-serif text-4xl text-gray-900 mb-4">CHAO Arquitectura</h1>
-        <p className="text-gray-600 mb-2">Portal del Cliente</p>
-        <p className="text-sm text-gray-400">
-          Use su enlace de acceso único para ver el estado de su proyecto.
-          <br />
-          Si no tiene un enlace, contacte a su项目经理.
+        <div className="w-12 h-12 rounded-full border border-g70 flex items-center justify-center mx-auto mb-6">
+          <Lock className="w-5 h-5 text-accent" />
+        </div>
+        <h1 className="font-display text-4xl text-white mb-3">Portal del cliente</h1>
+        <p className="text-g30">Consulta el avance de tu proyecto, hitos, documentos aprobados y facturas.</p>
+        <p className="text-sm text-g40 mt-4">
+          Ingresa con el enlace de acceso único que te envió tu director de proyecto. Si no lo tienes, escríbenos y te
+          enviaremos uno nuevo.
         </p>
       </div>
     </div>

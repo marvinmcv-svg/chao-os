@@ -29,6 +29,7 @@ import type { CreateLeadSchema } from '@/lib/validations'
 import { prisma } from '@/lib/prisma'
 import type { AuthUser } from '@/lib/auth'
 import { sendLeadConvertedEmail } from '@/lib/email'
+import { heuristicLeadScore } from '@/lib/lead-heuristics'
 import { scoreLead } from '@/lib/claude'
 import {
   ConflictError,
@@ -310,6 +311,7 @@ export const LeadService = {
     const data: Record<string, unknown> = { pipelineStage: args.pipelineStage }
     if (args.sortOrder !== undefined) data.sortOrder = args.sortOrder
     if (args.pipelineStage === 'WON') data.closeProbability = 100
+    if (args.pipelineStage === 'LOST') data.closeProbability = 0
 
     const lead = await prisma.lead.update({
       where: { id: args.id },
@@ -383,7 +385,7 @@ export const LeadService = {
     })
     if (!lead) throw new NotFoundError('Lead', args.id)
 
-    const result = await scoreLead({
+    const input = {
       projectName: lead.projectName,
       company: lead.company,
       contactName: lead.contactName,
@@ -396,7 +398,21 @@ export const LeadService = {
       sourceType: lead.sourceType,
       notes: lead.notes,
       assignedToName: lead.assignedTo.name,
-    })
+    }
+
+    let result: Awaited<ReturnType<typeof scoreLead>>
+    try {
+      result = await scoreLead(input)
+    } catch (e) {
+      // No API key configured → fall back to transparent rule-based scoring
+      // instead of failing the request. Other Claude errors still bubble up.
+      if (!(e instanceof Error) || !e.message.includes('ANTHROPIC_API_KEY')) throw e
+      const capacity = await prisma.teamMember.findMany({ select: { utilizationPercent: true } })
+      const studioUtilization = capacity.length
+        ? capacity.reduce((s, m) => s + m.utilizationPercent, 0) / capacity.length
+        : undefined
+      result = heuristicLeadScore({ ...input, studioUtilization })
+    }
 
     const breakdown = {
       financialScore: result.financialScore,

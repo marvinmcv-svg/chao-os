@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useCallback, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -8,64 +8,56 @@ interface ModalProps {
   open: boolean
   onClose: () => void
   title?: string
+  description?: string
   children: ReactNode
   className?: string
   size?: 'sm' | 'md' | 'lg' | 'xl'
 }
 
-export function Modal({ open, onClose, title, children, className, size = 'md' }: ModalProps) {
-  const handleEscape = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    },
-    [onClose]
-  )
+export function Modal({ open, onClose, title, description, children, className, size = 'md' }: ModalProps) {
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
 
   useEffect(() => {
-    if (open) {
-      document.addEventListener('keydown', handleEscape)
-      document.body.style.overflow = 'hidden'
-    }
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCloseRef.current() }
+    document.addEventListener('keydown', onKey)
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
     return () => {
-      document.removeEventListener('keydown', handleEscape)
-      document.body.style.overflow = ''
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prev
     }
-  }, [open, handleEscape])
+  }, [open])
 
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      
-      {/* Modal */}
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center sm:p-4" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm animate-fade-in" onClick={onClose} />
       <div
         className={cn(
-          'relative bg-g85 border border-g80 rounded-md shadow-2xl',
-          'max-h-[90vh] overflow-auto',
-          size === 'sm' && 'w-full max-w-sm',
-          size === 'md' && 'w-full max-w-lg',
-          size === 'lg' && 'w-full max-w-2xl',
-          size === 'xl' && 'w-full max-w-4xl',
+          'relative w-full bg-g90 border border-g70 rounded-t-xl sm:rounded-xl shadow-panel animate-pop-in',
+          'max-h-[92vh] flex flex-col',
+          size === 'sm' && 'sm:max-w-sm',
+          size === 'md' && 'sm:max-w-lg',
+          size === 'lg' && 'sm:max-w-2xl',
+          size === 'xl' && 'sm:max-w-4xl',
           className
         )}
       >
-        {/* Header */}
         {title && (
-          <div className="flex items-center justify-between px-6 py-4 border-b border-g80">
-            <h2 className="text-lg font-display text-white">{title}</h2>
-            <button
-              onClick={onClose}
-              className="p-1 text-g30 hover:text-white transition-colors rounded"
-            >
-              <X className="w-5 h-5" />
+          <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-g80 flex-shrink-0">
+            <div>
+              <h2 className="text-xl font-display text-white">{title}</h2>
+              {description && <p className="text-xs text-g40 mt-0.5">{description}</p>}
+            </div>
+            <button onClick={onClose} aria-label="Cerrar" className="p-1.5 -mr-1.5 text-g40 hover:text-white hover:bg-g80 transition-colors rounded-md">
+              <X className="w-4 h-4" />
             </button>
           </div>
         )}
-        
-        {/* Body */}
-        <div className="p-6">{children}</div>
+        <div className="p-6 overflow-y-auto">{children}</div>
       </div>
     </div>
   )

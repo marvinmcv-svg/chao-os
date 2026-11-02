@@ -129,12 +129,12 @@ export function NotificationBell() {
       {/* Bell button */}
       <button
         onClick={() => setOpen(prev => !prev)}
-        className="relative p-2 text-g30 hover:text-white transition-colors"
+        className="relative p-2 rounded-md text-g30 hover:text-white hover:bg-g80 transition-colors"
         aria-label="Notificaciones"
       >
-        <Bell className="w-5 h-5" />
+        <Bell className="w-[18px] h-[18px]" />
         {unreadCount > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">
+          <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full ring-2 ring-g95 flex items-center justify-center px-1">
             {badgeLabel}
           </span>
         )}
@@ -142,7 +142,7 @@ export function NotificationBell() {
 
       {/* Dropdown panel */}
       {open && (
-        <div className="absolute right-0 top-full mt-1 w-80 bg-g85 border border-g70 rounded-lg shadow-xl overflow-hidden z-50">
+        <div className="absolute right-0 top-full mt-2 w-[min(20rem,calc(100vw-2rem))] bg-g90 border border-g70 rounded-lg shadow-panel overflow-hidden z-50 animate-pop-in">
           {/* Header */}
           <div className="flex items-center justify-between p-3 border-b border-g70">
             <span className="text-sm font-semibold text-white">Notificaciones</span>

@@ -1,15 +1,22 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { X, Download, CheckCircle, Clock, AlertTriangle } from 'lucide-react'
+import Link from 'next/link'
+import { Download, Send, Banknote, AlertTriangle, ArrowUpRight, CheckCircle2 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
+import { Drawer } from '@/components/ui/Drawer'
+import { Input } from '@/components/ui/Input'
+import { Select } from '@/components/ui/Select'
+import { ProgressBar } from '@/components/ui/ProgressBar'
+import { ErrorBanner, Skeleton } from '@/components/ui/EmptyState'
+import { api } from '@/lib/api-client'
+import { INVOICE_STATUS, meta } from '@/lib/labels'
 import { formatCurrency, formatDate } from '@/lib/utils'
 
 interface Invoice {
   id: string
   number: string
-  milestoneLabel: string
   amountUSD: number
   currency: string
   exchangeRate: number
@@ -32,216 +39,240 @@ interface Props {
   onUpdate: () => void
 }
 
+const METHODS = ['Transferencia', 'Depósito', 'Cheque', 'QR', 'Efectivo']
+
 export function InvoiceDetailPanel({ invoiceId, open, onClose, onUpdate }: Props) {
   const [invoice, setInvoice] = useState<Invoice | null>(null)
   const [loading, setLoading] = useState(false)
-  const [updating, setUpdating] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [showPay, setShowPay] = useState(false)
+  const [pay, setPay] = useState({ amount: '', method: METHODS[0], reference: '' })
 
   const fetchInvoice = useCallback(async () => {
     if (!invoiceId) return
     setLoading(true)
+    setError(null)
     try {
-      const res = await fetch(`/api/invoices/${invoiceId}`)
-      const json = await res.json()
-      if (json.success) setInvoice(json.data)
+      const inv = await api<Invoice>(`/api/invoices/${invoiceId}`)
+      setInvoice(inv)
+      setPay((p) => ({ ...p, amount: String(Math.max(0, Math.round((inv.amountUSD - inv.paidAmount) * 100) / 100)) }))
     } catch (e) {
-      console.error('Failed to fetch invoice', e)
+      setError(e instanceof Error ? e.message : 'Factura no encontrada')
     } finally {
       setLoading(false)
     }
   }, [invoiceId])
 
   useEffect(() => {
-    if (invoiceId && open) {
-      fetchInvoice()
+    if (invoiceId && open) fetchInvoice()
+    if (!open) {
+      setInvoice(null)
+      setShowPay(false)
     }
-    if (!open) setInvoice(null)
   }, [invoiceId, open, fetchInvoice])
 
-  async function updateStatus(newStatus: string) {
-    if (!invoice) return
-    setUpdating(true)
+  async function run(fn: () => Promise<unknown>) {
+    setBusy(true)
+    setError(null)
     try {
-      const res = await fetch(`/api/invoices/${invoice.id}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
-      })
-      const json = await res.json()
-      if (json.success) {
-        onUpdate()
-        fetchInvoice()
-      }
+      await fn()
+      await fetchInvoice()
+      onUpdate()
+      return true
     } catch (e) {
-      console.error('Failed to update status', e)
+      setError(e instanceof Error ? e.message : 'No se pudo completar la acción')
+      return false
     } finally {
-      setUpdating(false)
+      setBusy(false)
     }
   }
 
-  // Escape key
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    if (open) document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [open, onClose])
+  const updateStatus = (status: string) =>
+    run(() => api(`/api/invoices/${invoiceId}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }))
 
-  if (!open) return null
+  async function recordPayment(e: React.FormEvent) {
+    e.preventDefault()
+    const amount = parseFloat(pay.amount)
+    if (!(amount > 0)) return setError('Ingresa un monto válido')
+    const ok = await run(() =>
+      api(`/api/invoices/${invoiceId}/payments`, {
+        method: 'POST',
+        body: JSON.stringify({ amountUSD: amount, method: pay.method, reference: pay.reference || undefined }),
+      })
+    )
+    if (ok) {
+      setShowPay(false)
+      setPay((p) => ({ ...p, reference: '' }))
+    }
+  }
 
-  const remaining = invoice ? invoice.amountUSD - (invoice.paidAmount || 0) : 0
+  const remaining = invoice ? Math.max(0, invoice.amountUSD - (invoice.paidAmount || 0)) : 0
   const isPaid = invoice?.status === 'PAID'
-  const isOverdue = invoice && invoice.status !== 'PAID' && new Date(invoice.dueDate) < new Date()
+  const isOverdue = !!invoice && !isPaid && invoice.status !== 'DRAFT' && new Date(invoice.dueDate) < new Date()
+  const st = invoice ? (isOverdue ? { label: 'Vencida', variant: 'red' as const } : meta(INVOICE_STATUS, invoice.status)) : null
+  const paidPct = invoice && invoice.amountUSD > 0 ? ((invoice.paidAmount || 0) / invoice.amountUSD) * 100 : 0
 
   return (
-    <>
-      <div className="fixed inset-0 bg-black/40 z-40" onClick={onClose} />
-      <div className="fixed right-0 top-0 h-screen w-[480px] bg-g90 border-l border-g80 z-50 overflow-y-auto">
-        {/* Header */}
-        <div className="sticky top-0 bg-g90 border-b border-g80 px-6 py-4 flex items-center justify-between">
-          <div>
-            <p className="text-xs font-mono text-g40">{invoice?.number}</p>
-            <h2 className="font-display text-xl text-white mt-0.5">{invoice?.milestoneLabel}</h2>
+    <Drawer
+      open={open}
+      onClose={onClose}
+      eyebrow={invoice ? `${invoice.project.code} · ${invoice.client.company}` : 'Factura'}
+      title={invoice?.number ?? (loading ? 'Cargando…' : '')}
+      actions={
+        invoice && (
+          <Button size="sm" variant="ghost" onClick={() => window.open(`/api/invoices/${invoice.id}/pdf`, '_blank')} aria-label="Descargar PDF">
+            <Download className="w-4 h-4" /> PDF
+          </Button>
+        )
+      }
+    >
+      {error && <div className="px-6 pt-4"><ErrorBanner message={error} /></div>}
+
+      {loading && !invoice ? (
+        <div className="p-6 space-y-4"><Skeleton className="h-28" /><Skeleton className="h-20" /><Skeleton className="h-32" /></div>
+      ) : invoice && st ? (
+        <div className="p-6 space-y-6">
+          <div className="rounded-lg border border-g80 bg-g85 p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-2xs font-mono text-g40 uppercase tracking-wider">Monto</p>
+                <p className="font-display text-4xl text-white mt-1 tabular">{formatCurrency(invoice.amountUSD)}</p>
+                {invoice.currency === 'BOB' && (
+                  <p className="text-xs text-g40 mt-1 font-mono">
+                    Bs. {(invoice.amountUSD * invoice.exchangeRate).toLocaleString('es-BO', { minimumFractionDigits: 2 })} · TC {invoice.exchangeRate}
+                  </p>
+                )}
+              </div>
+              <Badge variant={st.variant} dot>{st.label}</Badge>
+            </div>
+            <div className="mt-4">
+              <div className="flex justify-between text-2xs font-mono text-g40 mb-1.5 tabular">
+                <span>Cobrado {formatCurrency(invoice.paidAmount || 0)}</span>
+                <span className={remaining > 0 ? (isOverdue ? 'text-red-300' : 'text-yellow-300') : 'text-green-300'}>
+                  {remaining > 0 ? `Saldo ${formatCurrency(remaining)}` : 'Saldado'}
+                </span>
+              </div>
+              <ProgressBar value={isPaid ? 100 : paidPct} variant={isPaid || remaining === 0 ? 'green' : isOverdue ? 'red' : 'yellow'} />
+            </div>
+            <div className="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-g80 text-sm">
+              <div>
+                <p className="text-2xs font-mono text-g40 uppercase">Emitida</p>
+                <p className="text-g10 mt-0.5">{formatDate(invoice.issuedAt)}</p>
+              </div>
+              <div>
+                <p className="text-2xs font-mono text-g40 uppercase">Vence</p>
+                <p className={isOverdue ? 'text-red-300 mt-0.5' : 'text-g10 mt-0.5'}>{formatDate(invoice.dueDate)}</p>
+              </div>
+            </div>
           </div>
-          <button onClick={onClose} className="p-2 text-g40 hover:text-white transition-colors">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
 
-        {loading ? (
-          <div className="p-6 text-center text-g40 text-sm font-mono">Cargando...</div>
-        ) : invoice ? (
-          <div className="p-6 space-y-6">
-            {/* Status */}
-            <div className="flex items-center gap-3">
-              <Badge variant={isPaid ? 'green' : isOverdue ? 'red' : 'yellow'}>
-                {isPaid ? 'Pagada' : isOverdue ? 'Vencida' : invoice.status}
-              </Badge>
-              <span className="text-sm text-g30">
-                {isPaid ? `Pagada el ${formatDate(invoice.paidAt!)}` : ''}
-              </span>
-            </div>
-
-            {/* Amount */}
-            <div className="bg-g85 border border-g80 rounded-md p-5">
-              <p className="text-xs font-mono text-g40">Monto Total</p>
-              <p className="text-3xl font-display text-white mt-1">{formatCurrency(invoice.amountUSD)}</p>
-              {invoice.currency === 'BOB' && (
-                <p className="text-xs text-g40 mt-1">Bs. {(invoice.amountUSD * invoice.exchangeRate).toLocaleString('es-BO', { minimumFractionDigits: 2 })}</p>
-              )}
-              {!isPaid && remaining > 0 && (
-                <div className="mt-3 pt-3 border-t border-g80">
-                  <p className="text-xs font-mono text-g40">Saldo pendiente</p>
-                  <p className="text-lg font-mono text-yellow-400">{formatCurrency(remaining)}</p>
-                </div>
-              )}
-            </div>
-
-            {/* Status actions */}
-            {!isPaid && (
-              <div className="space-y-2">
-                <p className="text-xs font-mono text-g40 uppercase">Cambiar estado</p>
-                <div className="flex flex-wrap gap-2">
-                  {invoice.status === 'DRAFT' && (
-                    <Button size="sm" onClick={() => updateStatus('SENT')} disabled={updating}>Marcar como Enviada</Button>
-                  )}
-                  {['SENT', 'PENDING'].includes(invoice.status) && (
-                    <Button size="sm" variant="secondary" onClick={() => updateStatus('PENDING')} disabled={updating}>Marcar Pendiente</Button>
-                  )}
-                  {!isOverdue && ['SENT', 'PENDING'].includes(invoice.status) && (
-                    <Button size="sm" variant="secondary" onClick={() => updateStatus('OVERDUE')} disabled={updating}>Marcar Vencida</Button>
-                  )}
-                  <Button size="sm" variant="primary" onClick={() => updateStatus('PAID')} disabled={updating}>
-                    <CheckCircle className="w-4 h-4 mr-1" /> Marcar Pagada
+          {/* Actions */}
+          {!isPaid && (
+            <div className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                {invoice.status === 'DRAFT' && (
+                  <Button size="sm" onClick={() => updateStatus('SENT')} loading={busy}>
+                    <Send className="w-4 h-4" /> Emitir y enviar
                   </Button>
-                </div>
+                )}
+                {invoice.status !== 'DRAFT' && (
+                  <Button size="sm" variant="success" onClick={() => setShowPay((s) => !s)} disabled={busy}>
+                    <Banknote className="w-4 h-4" /> Registrar pago
+                  </Button>
+                )}
+                {invoice.status !== 'DRAFT' && invoice.status !== 'OVERDUE' && isOverdue && (
+                  <Button size="sm" variant="danger" onClick={() => updateStatus('OVERDUE')} disabled={busy}>
+                    <AlertTriangle className="w-4 h-4" /> Marcar vencida
+                  </Button>
+                )}
+              </div>
+
+              {showPay && (
+                <form onSubmit={recordPayment} className="rounded-lg border border-green-800/50 bg-green-950/20 p-4 space-y-3 animate-pop-in">
+                  <div className="grid grid-cols-2 gap-3">
+                    <Input label="Monto (USD)" type="number" step="0.01" min="0.01" max={remaining} value={pay.amount} onChange={(e) => setPay({ ...pay, amount: e.target.value })} required />
+                    <Select label="Método" value={pay.method} onChange={(e) => setPay({ ...pay, method: e.target.value })} options={METHODS.map((m) => ({ value: m, label: m }))} />
+                  </div>
+                  <Input label="Referencia (opcional)" value={pay.reference} onChange={(e) => setPay({ ...pay, reference: e.target.value })} placeholder="N° de transferencia" />
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-2xs text-g40">Al cubrir el saldo la factura pasa a <span className="text-green-300">Pagada</span> automáticamente.</p>
+                    <Button type="submit" size="sm" loading={busy}>Guardar pago</Button>
+                  </div>
+                </form>
+              )}
+            </div>
+          )}
+
+          {isPaid && invoice.paidAt && (
+            <div className="flex items-center gap-2 text-sm text-green-300">
+              <CheckCircle2 className="w-4 h-4" /> Pagada el {formatDate(invoice.paidAt)}
+            </div>
+          )}
+
+          {/* Line items */}
+          {invoice.lineItems.length > 0 && (
+            <section>
+              <h3 className="text-2xs font-mono text-g40 uppercase tracking-[0.14em] mb-2">Concepto</h3>
+              <div className="divide-y divide-g80 border border-g80 rounded-lg overflow-hidden">
+                {invoice.lineItems.map((item) => (
+                  <div key={item.id} className="flex justify-between gap-3 px-3.5 py-2.5 bg-g85">
+                    <div className="min-w-0">
+                      <p className="text-sm text-g10">{item.description}</p>
+                      {item.quantity !== 1 && <p className="text-2xs font-mono text-g40">{item.quantity} × {formatCurrency(item.unitPriceUSD)}</p>}
+                    </div>
+                    <p className="text-sm font-mono text-white tabular">{formatCurrency(item.totalUSD)}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Payments */}
+          <section>
+            <h3 className="text-2xs font-mono text-g40 uppercase tracking-[0.14em] mb-2">Pagos ({invoice.payments.length})</h3>
+            {invoice.payments.length === 0 ? (
+              <p className="text-sm text-g40">Sin pagos registrados.</p>
+            ) : (
+              <div className="divide-y divide-g80 border border-g80 rounded-lg overflow-hidden">
+                {invoice.payments.map((p) => (
+                  <div key={p.id} className="flex justify-between px-3.5 py-2.5 bg-g85">
+                    <div>
+                      <p className="text-sm text-g10">{formatDate(p.paidAt)}</p>
+                      <p className="text-2xs font-mono text-g40">{[p.method, p.reference].filter(Boolean).join(' · ') || '—'}</p>
+                    </div>
+                    <p className="text-sm font-mono text-green-300 tabular">{formatCurrency(p.amountUSD)}</p>
+                  </div>
+                ))}
               </div>
             )}
+          </section>
 
-            {/* Client */}
-            <div className="bg-g85 border border-g80 rounded-md p-4">
-              <h3 className="text-xs font-mono text-g40 uppercase tracking-wider mb-2">Cliente</h3>
-              <p className="text-white font-medium">{invoice.client.name}</p>
-              <p className="text-sm text-g30">{invoice.client.company}</p>
-              <p className="text-xs text-g40 mt-1">{invoice.client.email}</p>
+          {/* Client + project */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="rounded-lg border border-g80 bg-g85 p-4">
+              <p className="text-2xs font-mono text-g40 uppercase tracking-wider mb-2">Cliente</p>
+              <p className="text-sm text-white">{invoice.client.company}</p>
+              <p className="text-xs text-g30">{invoice.client.name}</p>
+              <p className="text-xs text-g40 mt-1 truncate">{invoice.client.email}</p>
             </div>
-
-            {/* Project */}
-            <div className="bg-g85 border border-g80 rounded-md p-4">
-              <h3 className="text-xs font-mono text-g40 uppercase tracking-wider mb-2">Proyecto</h3>
-              <p className="text-white">{invoice.project.name}</p>
+            <Link href={`/projects?id=${invoice.project.id}`} className="rounded-lg border border-g80 bg-g85 p-4 hover:border-g70 group">
+              <p className="text-2xs font-mono text-g40 uppercase tracking-wider mb-2 flex items-center justify-between">
+                Proyecto <ArrowUpRight className="w-3 h-3 group-hover:text-white" />
+              </p>
+              <p className="text-sm text-white">{invoice.project.name}</p>
               <p className="text-xs font-mono text-g40">{invoice.project.code}</p>
-            </div>
-
-            {/* Dates */}
-            <div className="flex gap-4 text-sm">
-              <div>
-                <p className="text-xs font-mono text-g40">Emitida</p>
-                <p className="text-g20 mt-0.5">{formatDate(invoice.issuedAt)}</p>
-              </div>
-              <div>
-                <p className="text-xs font-mono text-g40">Vence</p>
-                <p className={isOverdue ? 'text-red-400 mt-0.5' : 'text-g20 mt-0.5'}>{formatDate(invoice.dueDate)}</p>
-              </div>
-            </div>
-
-            {/* Line items */}
-            {invoice.lineItems.length > 0 && (
-              <div>
-                <h3 className="text-xs font-mono text-g40 uppercase tracking-wider mb-2">Línea de detalles</h3>
-                <div className="space-y-2">
-                  {invoice.lineItems.map(item => (
-                    <div key={item.id} className="flex justify-between py-2 border-b border-g80/50 last:border-0">
-                      <div>
-                        <p className="text-sm text-g20">{item.description}</p>
-                        <p className="text-xs text-g40">{item.quantity} × {formatCurrency(item.unitPriceUSD)}</p>
-                      </div>
-                      <p className="text-sm font-mono text-white">{formatCurrency(item.totalUSD)}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Payments history */}
-            {invoice.payments.length > 0 && (
-              <div>
-                <h3 className="text-xs font-mono text-g40 uppercase tracking-wider mb-2">Pagos ({invoice.payments.length})</h3>
-                <div className="space-y-2">
-                  {invoice.payments.map(p => (
-                    <div key={p.id} className="flex justify-between py-2 border-b border-g80/50 last:border-0">
-                      <div>
-                        <p className="text-sm text-g20">{formatDate(p.paidAt)}</p>
-                        {p.method && <p className="text-xs text-g40">{p.method}{p.reference ? ` — ${p.reference}` : ''}</p>}
-                      </div>
-                      <p className="text-sm font-mono text-green-400">{formatCurrency(p.amountUSD)}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Notes */}
-            {invoice.notes && (
-              <div>
-                <h3 className="text-xs font-mono text-g40 uppercase tracking-wider mb-1">Notas</h3>
-                <p className="text-sm text-g20 whitespace-pre-wrap">{invoice.notes}</p>
-              </div>
-            )}
-
-            {/* PDF download */}
-            <Button
-              variant="secondary"
-              className="w-full"
-              onClick={() => window.open(`/api/invoices/${invoice.id}/pdf`, '_blank')}
-            >
-              <Download className="w-4 h-4 mr-2" />
-              Descargar PDF
-            </Button>
+            </Link>
           </div>
-        ) : (
-          <div className="p-6 text-center text-g40 text-sm">Factura no encontrada</div>
-        )}
-      </div>
-    </>
+
+          {invoice.notes && (
+            <section>
+              <h3 className="text-2xs font-mono text-g40 uppercase tracking-[0.14em] mb-1">Notas</h3>
+              <p className="text-sm text-g20 whitespace-pre-wrap">{invoice.notes}</p>
+            </section>
+          )}
+        </div>
+      ) : null}
+    </Drawer>
   )
 }

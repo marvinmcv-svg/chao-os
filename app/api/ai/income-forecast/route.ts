@@ -99,58 +99,34 @@ export const GET = withApiHandler(async (_req: NextRequest) => {
     : (hasProbabilityData && activeProjectsCount >= 3) ? 'high'
     : 'medium'
 
-  // Call Claude to generate narrative
-  const claude = getClaude()
+  // Rule-based narrative (always available); Claude refines it when configured.
+  const fmt = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`
+  const top = leadsClosingThisMonth[0]
+  let narrative =
+    `Pipeline ponderado de ${fmt(pipelineWeighted)} sobre ${leads.length} oportunidades (${fmt(pipelineRaw)} bruto). ` +
+    `Se esperan ${fmt(expectedThisQuarter)} en cobros este trimestre de ${projects.length} proyectos activos. ` +
+    (top ? `Prioridad: cerrar ${top.name} (${fmt(top.value)} al ${top.probability}%). ` : 'No hay negociaciones avanzadas: reforzar prospección. ') +
+    `Confianza ${confidenceLevel === 'high' ? 'alta' : confidenceLevel === 'medium' ? 'media' : 'baja'}.`
+  let source: 'claude' | 'rules' = 'rules'
 
-  const prompt = `Eres el asistente financiero de CHAO OS. Analiza los datos de forecast y genera una narrativa en español.
-
-## Datos del Forecast
-
-### Pipeline de Leads:
-- Valor bruto total: $${pipelineRaw.toLocaleString()}
-- Valor ponderado (probabilidad): $${pipelineWeighted.toLocaleString()}
-- Total leads activos: ${leads.length}
-
-### Leads en negociación (cerrando este mes):
-${leadsClosingThisMonth.length > 0 ? leadsClosingThisMonth.map(l =>
-  `- ${l.name} (${l.company}) — $${l.value.toLocaleString()} @ ${l.probability}% — Asignado a: ${l.assignedTo}`
-).join('\n') : 'Sin leads cerrando este mes'}
-
-### Ingresos Comprometidos:
-- Proyectos activos: ${projects.length}
-- Revenue comprometido: $${committedRevenue.toLocaleString()}
-- Facturación esperada este trimestre: $${expectedThisQuarter.toLocaleString()}
-
-### Proyectos facturando este mes:
-${projectsInvoicingThisMonth.length > 0 ? projectsInvoicingThisMonth.map(p =>
-  `- ${p.name} (${p.client}) — $${p.value.toLocaleString()}`
-).join('\n') : 'Sin proyectos facturando este mes'}
-
-### Nivel de confianza: ${confidenceLevel}
-
-## Instrucciones
-Genera una narrativa financiera en español (máx 400 caracteres) que:
-1. Explique brevemente la situación del pipeline
-2. Destaque los leads más importantes cerrando este mes
-3. Indique el nivel de confianza del forecast
-4. Dé una recomendación corta (qué hacer con el forecast)
-
-Devuelve SOLO JSON válido con este formato exacto:
-{
-  "narrative": "texto narrativo en español, máximo 400 caracteres"
-}`
-
-  const responseText = await claude.complete(prompt, { maxTokens: 1024, temperature: 0.3 })
-
-  let narrative = 'Forecast basado en datos actuales del pipeline y proyectos activos.'
-  try {
-    const jsonMatch = responseText.match(/{[\s\S]*}/m)
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0])
-      narrative = parsed.narrative ?? narrative
+  if (process.env.ANTHROPIC_API_KEY) {
+    try {
+      const claude = getClaude()
+      const prompt = `Eres el asistente financiero de CHAO Arquitectura. Con estos datos escribe una narrativa en español (máx 400 caracteres) sobre el pipeline, los cierres del mes, la confianza y una recomendación.
+Datos: ${JSON.stringify({ pipelineRaw, pipelineWeighted, leads: leads.length, leadsClosingThisMonth, committedRevenue, expectedThisQuarter, projectsInvoicingThisMonth, confidenceLevel })}
+Devuelve SOLO JSON: {"narrative": "..."}`
+      const responseText = await claude.complete(prompt, { maxTokens: 1024, temperature: 0.3 })
+      const jsonMatch = responseText.match(/{[\s\S]*}/m)
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0])
+        if (parsed.narrative) {
+          narrative = parsed.narrative
+          source = 'claude'
+        }
+      }
+    } catch (e) {
+      console.error('[ai/income-forecast] Claude unavailable, using rule-based narrative:', e instanceof Error ? e.message : e)
     }
-  } catch {
-    console.error('Failed to parse narrative JSON from Claude response')
   }
 
   return {
@@ -164,6 +140,7 @@ Devuelve SOLO JSON válido con este formato exacto:
       leadsClosingThisMonth: leadsClosingThisMonth.slice(0, 5),
       projectsInvoicingThisMonth: projectsInvoicingThisMonth.slice(0, 5),
     },
+    source,
     generatedAt: new Date().toISOString(),
   }
 })

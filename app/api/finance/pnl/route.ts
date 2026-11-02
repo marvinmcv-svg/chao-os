@@ -17,12 +17,12 @@ export const GET = withApiHandler(async (req: NextRequest) => {
     where,
     include: {
       invoices: {
-        where: { status: { in: ['PAID', 'PENDING'] } },
+        where: { status: { not: 'DRAFT' } },
         select: { amountUSD: true, status: true },
       },
       expenses: { select: { amountUSD: true } },
       timeEntries: {
-        select: { hours: true },
+        select: { hours: true, user: { select: { teamMember: { select: { hourlyRate: true } } } } },
       },
       teamMembers: true,
     },
@@ -32,19 +32,22 @@ export const GET = withApiHandler(async (req: NextRequest) => {
   const DEFAULT_HOURLY_RATE = Number(process.env.DEFAULT_HOURLY_RATE) || 50
 
   const pnlData = projects.map(project => {
-    const revenue = project.invoices
-      .filter(i => i.status === 'PAID' || i.status === 'PENDING')
-      .reduce((sum, i) => sum + i.amountUSD, 0)
+    // Revenue = everything invoiced (not drafts)
+    const revenue = project.invoices.reduce((sum, i) => sum + i.amountUSD, 0)
     const expenses = project.expenses.reduce((sum, e) => sum + e.amountUSD, 0)
     const hoursLogged = project.timeEntries.reduce((sum, t) => sum + t.hours, 0)
-    // Approximate labor cost: total hours × default hourly rate × number of team members
-    // Note: per-member hour tracking + custom rates deferred to v2
-    const laborCost = hoursLogged * DEFAULT_HOURLY_RATE
+    // Labor cost: each entry at the member's own cost rate, or the default
+    const laborCost = project.timeEntries.reduce(
+      (sum, t) => sum + t.hours * (t.user.teamMember?.hourlyRate ?? DEFAULT_HOURLY_RATE),
+      0,
+    )
     const netProfit = revenue - expenses - laborCost
     const margin = revenue > 0 ? Math.round((netProfit / revenue) * 100) : 0
 
     return {
       projectId: project.id,
+      status: project.status,
+      feeUSD: project.totalBudgetUSD,
       code: project.code,
       name: project.name,
       revenue,

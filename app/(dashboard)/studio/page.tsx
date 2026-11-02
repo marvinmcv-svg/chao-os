@@ -1,14 +1,21 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Clock, Users, AlertTriangle, TrendingUp } from 'lucide-react'
-import { Card, CardContent } from '@/components/ui/Card'
+import { Suspense, useCallback, useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Clock, Users, AlertTriangle, Gauge } from 'lucide-react'
+import { Panel } from '@/components/ui/Card'
 import { Avatar } from '@/components/ui/Avatar'
 import { ProgressBar } from '@/components/ui/ProgressBar'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
+import { PageHeader } from '@/components/ui/PageHeader'
+import { StatCard } from '@/components/ui/StatCard'
+import { EmptyState, ErrorBanner, Skeleton } from '@/components/ui/EmptyState'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table'
 import { TimeTrackingWidget } from '@/components/studio/TimeTrackingWidget'
-import { formatCurrency } from '@/lib/utils'
+import { WorkloadHeatmap } from '@/components/studio/WorkloadHeatmap'
+import { api } from '@/lib/api-client'
+import { cn, formatDate, weekPace, workdaysElapsedThisWeek } from '@/lib/utils'
 
 interface TeamMember {
   id: string
@@ -21,8 +28,6 @@ interface TeamMember {
   utilizationPercent: number
   activeTasks: number
   isOverloaded: boolean
-  startDate: string | null
-  hourlyRate: number | null
 }
 
 interface CapacitySummary {
@@ -33,189 +38,189 @@ interface CapacitySummary {
   totalAvailable: number
 }
 
-function UtilizationBar({ percent, size = 'md' }: { percent: number; size?: 'sm' | 'md' }) {
-  const variant = percent >= 90 ? 'red' : percent >= 75 ? 'yellow' : 'green'
+interface Entry {
+  id: string
+  description: string
+  hours: number
+  date: string
+  user: { name: string; avatarInitials: string }
+  project: { code: string; name: string }
+}
+
+function utilTone(p: number): 'red' | 'yellow' | 'green' | 'blue' {
+  return p >= 100 ? 'red' : p >= 90 ? 'yellow' : p >= 50 ? 'green' : 'blue'
+}
+
+function StudioInner() {
+  const router = useRouter()
+  const params = useSearchParams()
+  const [members, setMembers] = useState<TeamMember[] | null>(null)
+  const [summary, setSummary] = useState<CapacitySummary | null>(null)
+  const [entries, setEntries] = useState<Entry[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [showLog, setShowLog] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
+
+  useEffect(() => {
+    if (params.get('log')) setShowLog(true)
+  }, [params])
+
+  const load = useCallback(async () => {
+    setError(null)
+    const from = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10)
+    try {
+      const [cap, te] = await Promise.all([
+        api<{ members: TeamMember[]; summary: CapacitySummary }>('/api/studio/capacity'),
+        api<Entry[]>(`/api/time-entries?from=${from}`),
+      ])
+      setMembers(cap.members)
+      setSummary(cap.summary)
+      setEntries(te.slice(0, 12))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo cargar el estudio')
+      setMembers([])
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
   return (
-    <div className="flex items-center gap-2">
-      <ProgressBar value={percent} variant={variant} className="flex-1" />
-      <span className={`font-mono text-g30 ${size === 'sm' ? 'text-xs' : 'text-sm'}`}>
-        {percent}%
-      </span>
+    <div className="space-y-6">
+      <PageHeader
+        title="Estudio"
+        subtitle="Capacidad, carga de trabajo y hojas de horas del equipo"
+        actions={
+          <Button onClick={() => setShowLog(true)}>
+            <Clock className="w-4 h-4" /> Registrar horas
+          </Button>
+        }
+      />
+
+      {error && <ErrorBanner message={error} onRetry={load} />}
+
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
+        {!summary || !members ? (
+          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[120px] rounded-lg" />)
+        ) : (
+          <>
+            <StatCard label="Equipo" icon={Users} value={members.length} hint={`${summary.totalCapacity} h de capacidad semanal`} />
+            {(() => {
+              const pace = weekPace(summary.totalLogged, summary.totalCapacity)
+              return (
+                <StatCard label="Ritmo de la semana" icon={Gauge} value={`${pace}%`} tone={pace >= 110 ? 'red' : pace >= 95 ? 'yellow' : 'default'} hint={`${summary.avgUtilization}% de la semana completa · día ${workdaysElapsedThisWeek()} de 5`}>
+                  <ProgressBar value={pace} variant={utilTone(pace)} />
+                </StatCard>
+              )
+            })()}
+            <StatCard label="Horas esta semana" icon={Clock} value={<>{Math.round(summary.totalLogged)}<span className="text-xl text-g40"> / {summary.totalCapacity}</span></>} hint={`${Math.max(0, Math.round(summary.totalAvailable))} h disponibles`} />
+            <StatCard
+              label="Sobrecargados"
+              icon={AlertTriangle}
+              value={summary.overloadedCount}
+              tone={summary.overloadedCount > 0 ? 'red' : 'green'}
+              hint={summary.overloadedCount > 0 ? '≥ 90% de su capacidad' : 'Carga equilibrada'}
+            />
+          </>
+        )}
+      </div>
+
+      <Panel title="Carga de trabajo · 6 semanas atrás + 4 adelante" bodyClassName="p-4">
+        <WorkloadHeatmap refreshKey={refreshKey} />
+      </Panel>
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+        <Panel title="Capacidad esta semana" className="xl:col-span-2">
+          {!members ? (
+            <div className="p-5 space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12" />)}</div>
+          ) : members.length === 0 ? (
+            <EmptyState icon={Users} title="Sin miembros del equipo" />
+          ) : (
+            <Table>
+              <TableHeader>
+                <tr>
+                  <TableHead>Miembro</TableHead>
+                  <TableHead className="text-center">Tareas</TableHead>
+                  <TableHead className="text-right">Horas</TableHead>
+                  <TableHead className="min-w-[180px]">Ritmo vs. esperado</TableHead>
+                  <TableHead className="text-right">Estado</TableHead>
+                </tr>
+              </TableHeader>
+              <TableBody>
+                {members.map((m) => {
+                  const pace = weekPace(m.weeklyHoursLogged, m.weeklyHoursCapacity)
+                  const tone = utilTone(pace)
+                  return (
+                    <TableRow key={m.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <Avatar initials={m.avatarInitials} />
+                          <div className="min-w-0">
+                            <p className="text-sm text-white truncate">{m.name}</p>
+                            <p className="text-xs text-g40 truncate">{m.role}</p>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center font-mono tabular">{m.activeTasks}</TableCell>
+                      <TableCell className="text-right font-mono tabular">
+                        <span className="text-white">{m.weeklyHoursLogged}</span>
+                        <span className="text-g40"> / {m.weeklyHoursCapacity}h</span>
+                      </TableCell>
+                      <TableCell><ProgressBar value={pace} variant={tone} showLabel /></TableCell>
+                      <TableCell className="text-right">
+                        <Badge variant={tone === 'blue' ? 'default' : tone} dot>
+                          {pace >= 110 ? 'Excedido' : pace >= 95 ? 'Al límite' : pace >= 60 ? 'Óptimo' : 'Disponible'}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </Panel>
+
+        <Panel title="Últimos registros">
+          {!entries ? (
+            <div className="p-5 space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
+          ) : entries.length === 0 ? (
+            <EmptyState icon={Clock} title="Sin horas registradas" description="Usa el cronómetro o carga horas manualmente." />
+          ) : (
+            <ul className="divide-y divide-g80">
+              {entries.map((e) => (
+                <li key={e.id} className="flex items-center gap-3 px-5 py-3">
+                  <Avatar initials={e.user.avatarInitials} size="sm" title={e.user.name} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm text-g10 truncate">{e.description}</p>
+                    <p className="text-2xs font-mono text-g40 truncate">{e.project.code} · {formatDate(e.date)}</p>
+                  </div>
+                  <span className={cn('text-sm font-mono tabular', e.hours > 9 ? 'text-yellow-300' : 'text-g10')}>{e.hours}h</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Panel>
+      </div>
+
+      {showLog && (
+        <TimeTrackingWidget
+          onClose={() => {
+            setShowLog(false)
+            if (params.get('log')) router.replace('/studio')
+          }}
+          onEntryAdded={() => {
+            load()
+            setRefreshKey((k) => k + 1)
+          }}
+        />
+      )}
     </div>
   )
 }
 
 export default function StudioPage() {
-  const [members, setMembers] = useState<TeamMember[]>([])
-  const [summary, setSummary] = useState<CapacitySummary | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [showTimeTracking, setShowTimeTracking] = useState(false)
-
-  useEffect(() => {
-    fetchCapacity()
-  }, [])
-
-  async function fetchCapacity() {
-    try {
-      const res = await fetch('/api/studio/capacity')
-      const json = await res.json()
-      if (json.success) {
-        setMembers(json.data.members)
-        setSummary(json.data.summary)
-      }
-    } catch (e) {
-      console.error('Failed to fetch capacity', e)
-    } finally {
-      setLoading(false)
-    }
-  }
-
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="font-display text-3xl text-white">Estudio</h1>
-          <p className="text-g40 mt-1 text-sm font-mono">Equipo y capacidad — CHAO OS</p>
-        </div>
-        <Button onClick={() => setShowTimeTracking(true)}>
-          <Clock className="w-4 h-4 mr-2" />
-          Registrar Horas
-        </Button>
-      </div>
-
-      {/* Summary cards */}
-      {summary && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card>
-            <CardContent className="p-5">
-              <div className="flex items-center gap-2 mb-2">
-                <Users className="w-4 h-4 text-g40" />
-                <p className="text-xs font-mono text-g40 uppercase">Miembros</p>
-              </div>
-              <p className="font-display text-3xl text-white">{members.length}</p>
-              <p className="text-xs text-g40 mt-1">equipo activo</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-5">
-              <div className="flex items-center gap-2 mb-2">
-                <TrendingUp className="w-4 h-4 text-g40" />
-                <p className="text-xs font-mono text-g40 uppercase">Utilización Promedio</p>
-              </div>
-              <p className={`font-display text-3xl ${summary.avgUtilization >= 80 ? 'text-yellow-400' : 'text-white'}`}>
-                {summary.avgUtilization}%
-              </p>
-              <UtilizationBar percent={summary.avgUtilization} />
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-5">
-              <div className="flex items-center gap-2 mb-2">
-                <Clock className="w-4 h-4 text-g40" />
-                <p className="text-xs font-mono text-g40 uppercase">Horas Semana</p>
-              </div>
-              <p className="font-display text-3xl text-white">
-                {summary.totalLogged}
-                <span className="text-lg text-g40"> / {summary.totalCapacity}</span>
-              </p>
-              <p className="text-xs text-g40 mt-1">registradas esta semana</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-5">
-              <div className="flex items-center gap-2 mb-2">
-                <AlertTriangle className="w-4 h-4 text-g40" />
-                <p className="text-xs font-mono text-g40 uppercase">Sobrecargados</p>
-              </div>
-              <p className={`font-display text-3xl ${summary.overloadedCount > 0 ? 'text-red-400' : 'text-green-400'}`}>
-                {summary.overloadedCount}
-              </p>
-              <p className="text-xs text-g40 mt-1">≥90% utilización</p>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {/* Capacity grid */}
-      <div className="bg-g85 border border-g80 rounded-md overflow-hidden">
-        <div className="px-4 py-3 border-b border-g80">
-          <h2 className="font-mono text-sm text-g40 uppercase tracking-wider">Capacidad del Equipo</h2>
-        </div>
-
-        {loading ? (
-          <div className="text-center py-12 text-g40 text-sm font-mono">Cargando...</div>
-        ) : (
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-g80">
-                <th className="px-4 py-3 text-left text-xs font-mono text-g40 uppercase">Miembro</th>
-                <th className="px-4 py-3 text-left text-xs font-mono text-g40 uppercase">Rol</th>
-                <th className="px-4 py-3 text-center text-xs font-mono text-g40 uppercase">Tareas Activas</th>
-                <th className="px-4 py-3 text-center text-xs font-mono text-g40 uppercase">Horas Semana</th>
-                <th className="px-4 py-3 text-left text-xs font-mono text-g40 uppercase">Utilización</th>
-                <th className="px-4 py-3 text-left text-xs font-mono text-g40 uppercase">Estado</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-g80/50">
-              {members.map(member => (
-                <tr key={member.id} className="hover:bg-g80/30 transition-colors">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <Avatar initials={member.avatarInitials} size="md" />
-                      <div>
-                        <p className="text-sm font-medium text-white">{member.name}</p>
-                        {member.isOverloaded && (
-                          <p className="text-xs text-red-400 mt-0.5">⚠ Sobrecargado</p>
-                        )}
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <p className="text-sm text-g30">{member.role}</p>
-                  </td>
-                  <td className="px-4 py-3 text-center">
-                    <Badge variant={member.activeTasks >= 5 ? 'yellow' : member.activeTasks >= 3 ? 'blue' : 'default'}>
-                      {member.activeTasks}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3 text-center">
-                    <div>
-                      <p className="text-sm font-mono text-white">
-                        {member.weeklyHoursLogged}
-                        <span className="text-g40"> / {member.weeklyHoursCapacity}h</span>
-                      </p>
-                      <p className="text-xs text-g40">
-                        {member.weeklyHoursCapacity - member.weeklyHoursLogged}h disponibles
-                      </p>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 min-w-[160px]">
-                    <UtilizationBar percent={member.utilizationPercent} />
-                  </td>
-                  <td className="px-4 py-3">
-                    {member.isOverloaded ? (
-                      <Badge variant="red">Sobrecargado</Badge>
-                    ) : member.utilizationPercent >= 75 ? (
-                      <Badge variant="yellow">Alto</Badge>
-                    ) : (
-                      <Badge variant="green">Normal</Badge>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {/* Time tracking widget (modal/drawer) */}
-      {showTimeTracking && (
-        <TimeTrackingWidget
-          onClose={() => setShowTimeTracking(false)}
-          onEntryAdded={fetchCapacity}
-        />
-      )}
-    </div>
+    <Suspense fallback={null}>
+      <StudioInner />
+    </Suspense>
   )
 }

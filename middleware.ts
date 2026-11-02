@@ -10,6 +10,10 @@ import { NextResponse, type NextRequest } from 'next/server'
  *  - `/login`       — if logged in, redirect to /dashboard
  *  - `/api/*`       — if not logged in, return 401 JSON (NOT a redirect)
  *  - `/`            — public, always allowed
+ *  - `/portal/*`, `/api/portal/*` — public: clients authenticate with their
+ *    own portal token (validated per request by PortalService), not a staff
+ *    session. Previously these were gated behind staff login, so no client
+ *    could ever open the portal.
  *  - everything else — if not logged in, redirect to /login
  */
 export function checkRoute(req: NextRequest & { auth: unknown }): NextResponse {
@@ -19,9 +23,11 @@ export function checkRoute(req: NextRequest & { auth: unknown }): NextResponse {
   const isApiAuthRoute = path.startsWith('/api/auth')
   const isApiRoute = path.startsWith('/api/')
   const isPublicRoute = path === '/'
+  const isPortalRoute =
+    path === '/portal' || path.startsWith('/portal/') || path.startsWith('/api/portal/')
 
-  // Allow NextAuth's own API routes
-  if (isApiAuthRoute) {
+  // Allow NextAuth's own API routes and the token-authenticated client portal
+  if (isApiAuthRoute || isPortalRoute) {
     return NextResponse.next()
   }
 
@@ -50,5 +56,5 @@ export function checkRoute(req: NextRequest & { auth: unknown }): NextResponse {
 export default auth(checkRoute)
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.png$|.*\\.svg$).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|sw\\.js|manifest\\.json|robots\\.txt|sitemap\\.xml|icons/|.*\\.png$|.*\\.svg$).*)'],
 }

@@ -80,7 +80,7 @@ describe('prisma/seed.ts', () => {
     expect(leads).toBe(8)
     expect(invoices).toBe(5)
     expect(tasks).toBe(7)
-    expect(timeEntries).toBe(5)
+    expect(timeEntries).toBeGreaterThan(5) // 5 fixed + ~6 weeks of relative-date timesheets
     expect(notifications).toBe(4) // 4 notifications, all with title (Bug #1)
     expect(expenses).toBe(3)
   })

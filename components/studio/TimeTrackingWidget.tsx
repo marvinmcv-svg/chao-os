@@ -1,17 +1,21 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { Clock, X, Play, Pause, Square } from 'lucide-react'
+import { Play, Pause, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
-import { formatDate } from '@/lib/utils'
+import { Drawer } from '@/components/ui/Drawer'
+import { ErrorBanner } from '@/components/ui/EmptyState'
+import { api, asList } from '@/lib/api-client'
+import { cn } from '@/lib/utils'
 
 interface Project {
   id: string
   code: string
   name: string
-  currentPhase: string
+  status: string
+  phases: { id: string; phase: string; label: string; status: string }[]
 }
 
 interface Props {
@@ -19,187 +23,150 @@ interface Props {
   onEntryAdded: () => void
 }
 
+const TIMER_KEY = 'chao.timer.v1'
+
+/** Today in La Paz (UTC-4) as yyyy-mm-dd — `toISOString()` is UTC and can be tomorrow. */
+function localToday() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/La_Paz' }).format(new Date())
+}
+
+type TimerState = { startedAt: number | null; accumulated: number }
+
+function readTimer(): TimerState {
+  try {
+    const raw = localStorage.getItem(TIMER_KEY)
+    if (raw) return JSON.parse(raw)
+  } catch {}
+  return { startedAt: null, accumulated: 0 }
+}
+
+function writeTimer(t: TimerState) {
+  try {
+    localStorage.setItem(TIMER_KEY, JSON.stringify(t))
+  } catch {}
+}
+
 export function TimeTrackingWidget({ onClose, onEntryAdded }: Props) {
   const [projects, setProjects] = useState<Project[]>([])
   const [description, setDescription] = useState('')
   const [hours, setHours] = useState('')
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
+  const [date, setDate] = useState(localToday())
   const [projectId, setProjectId] = useState('')
+  const [phaseId, setPhaseId] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
-  // Timer state
-  const [timerRunning, setTimerRunning] = useState(false)
-  const [timerSeconds, setTimerSeconds] = useState(0)
-  const timerRef = useRef<NodeJS.Timeout | null>(null)
+  // Timer survives closing the drawer / reloading (persisted per browser)
+  const [timer, setTimer] = useState<TimerState>({ startedAt: null, accumulated: 0 })
+  const [, tick] = useState(0)
+  const ref = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
-    fetchProjects()
-    return () => { if (timerRef.current) clearInterval(timerRef.current) }
+    setTimer(readTimer())
+    api<unknown>('/api/projects?limit=200')
+      .then((d) => setProjects(asList<Project>(d, 'projects').filter((p) => p.status !== 'COMPLETED')))
+      .catch(() => setError('No se pudieron cargar los proyectos'))
   }, [])
 
-  async function fetchProjects() {
-    try {
-      const res = await fetch('/api/projects')
-      const json = await res.json()
-      if (json.success) setProjects(json.data)
-    } catch (e) {
-      console.error('Failed to fetch projects', e)
+  useEffect(() => {
+    if (timer.startedAt) {
+      ref.current = setInterval(() => tick((n) => n + 1), 1000)
+      return () => { if (ref.current) clearInterval(ref.current) }
     }
+  }, [timer.startedAt])
+
+  const seconds = Math.floor(timer.accumulated + (timer.startedAt ? (Date.now() - timer.startedAt) / 1000 : 0))
+  const running = !!timer.startedAt
+  const usingTimer = running || seconds > 0
+
+  function update(t: TimerState) {
+    setTimer(t)
+    writeTimer(t)
   }
 
-  // Timer controls
-  function startTimer() {
-    if (timerRef.current) clearInterval(timerRef.current)
-    setTimerRunning(true)
-    timerRef.current = setInterval(() => {
-      setTimerSeconds(s => s + 1)
-    }, 1000)
-  }
+  const start = () => update({ startedAt: Date.now(), accumulated: timer.accumulated })
+  const pause = () => update({ startedAt: null, accumulated: seconds })
+  const reset = () => update({ startedAt: null, accumulated: 0 })
 
-  function stopTimer() {
-    setTimerRunning(false)
-    if (timerRef.current) clearInterval(timerRef.current)
-  }
+  const fmt = (s: number) => [Math.floor(s / 3600), Math.floor((s % 3600) / 60), s % 60].map((n) => String(n).padStart(2, '0')).join(':')
 
-  function resetTimer() {
-    stopTimer()
-    setTimerSeconds(0)
-  }
-
-  function formatTimerDisplay(seconds: number): string {
-    const h = Math.floor(seconds / 3600)
-    const m = Math.floor((seconds % 3600) / 60)
-    const s = seconds % 60
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-  }
+  const project = projects.find((p) => p.id === projectId)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-
-    let hoursToSubmit = parseFloat(hours)
-    if (timerRunning || timerSeconds > 0) {
-      hoursToSubmit = timerSeconds / 3600
-    }
-
-    if (!description.trim() || !projectId) {
-      setError('Descripción y proyecto son requeridos')
-      return
-    }
+    // Round timer to the nearest quarter hour (min 0.25 h)
+    const h = usingTimer ? Math.max(0.25, Math.round((seconds / 3600) * 4) / 4) : parseFloat(hours)
+    if (!projectId) return setError('Selecciona un proyecto')
+    if (!description.trim()) return setError('Describe el trabajo realizado')
+    if (!(h > 0) || h > 24) return setError('Las horas deben estar entre 0.25 y 24')
 
     setSubmitting(true)
     try {
-      const res = await fetch('/api/time-entries', {
+      await api('/api/time-entries', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, description, hours: hoursToSubmit, date }),
+        body: JSON.stringify({ projectId, phaseId: phaseId || undefined, description: description.trim(), hours: h, date }),
       })
-      const json = await res.json()
-      if (!json.success) {
-        setError(json.error?.message || 'Error al registrar')
-        return
-      }
-      resetTimer()
-      setDescription('')
-      setHours('')
+      reset()
       onEntryAdded()
       onClose()
-    } catch {
-      setError('Error de conexión')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al registrar')
     } finally {
       setSubmitting(false)
     }
   }
 
   return (
-    <>
-      <div className="fixed inset-0 bg-black/40 z-40" onClick={onClose} />
-      <div className="fixed right-0 top-0 h-screen w-[420px] bg-g90 border-l border-g80 z-50 overflow-y-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-g80">
-          <div className="flex items-center gap-2">
-            <Clock className="w-5 h-5 text-g30" />
-            <h2 className="font-mono text-sm text-g40 uppercase">Registrar Horas</h2>
+    <Drawer open onClose={onClose} eyebrow="Hoja de horas" title="Registrar horas">
+      <form onSubmit={handleSubmit} className="p-6 space-y-5">
+        {error && <ErrorBanner message={error} />}
+
+        <div className={cn('rounded-lg border p-5 text-center transition-colors', running ? 'border-accent/50 bg-accent-muted' : 'border-g80 bg-g85')}>
+          <p className="font-mono text-5xl text-white tabular tracking-tight">{fmt(seconds)}</p>
+          <p className="text-2xs font-mono text-g40 mt-1">{running ? 'Cronómetro en marcha — puedes cerrar este panel' : usingTimer ? 'En pausa' : 'Usa el cronómetro o ingresa las horas'}</p>
+          <div className="flex justify-center gap-2 mt-4">
+            {!running ? (
+              <Button size="sm" onClick={start}><Play className="w-4 h-4" /> {seconds > 0 ? 'Reanudar' : 'Iniciar'}</Button>
+            ) : (
+              <Button size="sm" variant="secondary" onClick={pause}><Pause className="w-4 h-4" /> Pausar</Button>
+            )}
+            {usingTimer && <Button size="sm" variant="ghost" onClick={reset}><RotateCcw className="w-4 h-4" /> Reiniciar</Button>}
           </div>
-          <button onClick={onClose} className="p-1 text-g40 hover:text-white transition-colors">
-            <X className="w-5 h-5" />
-          </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 space-y-5">
-          {error && (
-            <div className="p-3 bg-red-900/30 border border-red-800 rounded text-sm text-red-400">
-              {error}
-            </div>
-          )}
+        <Select
+          label="Proyecto"
+          value={projectId}
+          onChange={(e) => { setProjectId(e.target.value); setPhaseId('') }}
+          options={[{ value: '', label: 'Seleccionar proyecto…' }, ...projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))]}
+        />
 
-          {/* Timer */}
-          <div className="bg-g85 border border-g80 rounded-md p-4">
-            <p className="text-center font-mono text-4xl text-white mb-4">
-              {formatTimerDisplay(timerSeconds)}
-            </p>
-            <div className="flex justify-center gap-2">
-              {!timerRunning ? (
-                <Button type="button" size="sm" onClick={startTimer}>
-                  <Play className="w-4 h-4 mr-1" /> Iniciar
-                </Button>
-              ) : (
-                <Button type="button" size="sm" variant="secondary" onClick={stopTimer}>
-                  <Pause className="w-4 h-4 mr-1" /> Pausar
-                </Button>
-              )}
-              <Button type="button" size="sm" variant="ghost" onClick={resetTimer}>
-                <Square className="w-4 h-4 mr-1" /> Reset
-              </Button>
-            </div>
-          </div>
-
+        {project && project.phases?.length > 0 && (
           <Select
-            label="Proyecto"
-            options={[
-              { value: '', label: 'Seleccionar proyecto...' },
-              ...projects.map(p => ({ value: p.id, label: `${p.code} — ${p.name}` })),
-            ]}
-            value={projectId}
-            onChange={e => setProjectId(e.target.value)}
+            label="Fase (opcional)"
+            value={phaseId}
+            onChange={(e) => setPhaseId(e.target.value)}
+            options={[{ value: '', label: 'Sin fase' }, ...project.phases.map((ph) => ({ value: ph.id, label: `${ph.phase} · ${ph.label}` }))]}
           />
+        )}
 
-          <Input
-            label="Descripción del trabajo"
-            placeholder="Modelado 3D Fachada Norte"
-            value={description}
-            onChange={e => setDescription(e.target.value)}
-          />
+        <Input label="Descripción del trabajo" placeholder="Modelado 3D fachada norte" value={description} onChange={(e) => setDescription(e.target.value)} />
 
-          {!timerRunning && timerSeconds === 0 && (
-            <Input
-              label="Horas (alternativa al timer)"
-              type="number"
-              step="0.25"
-              min="0.25"
-              max="24"
-              placeholder="2.5"
-              value={hours}
-              onChange={e => setHours(e.target.value)}
-            />
+        <div className="grid grid-cols-2 gap-4">
+          {!usingTimer ? (
+            <Input label="Horas" type="number" step="0.25" min="0.25" max="24" placeholder="2.5" value={hours} onChange={(e) => setHours(e.target.value)} />
+          ) : (
+            <Input label="Horas (cronómetro)" value={String(Math.max(0.25, Math.round((seconds / 3600) * 4) / 4))} readOnly hint="Redondeado a 15 min" />
           )}
+          <Input label="Fecha" type="date" value={date} max={localToday()} onChange={(e) => setDate(e.target.value)} />
+        </div>
 
-          <Input
-            label="Fecha"
-            type="date"
-            value={date}
-            onChange={e => setDate(e.target.value)}
-          />
-
-          <div className="flex justify-end gap-3 pt-4 border-t border-g80">
-            <Button type="button" variant="secondary" onClick={onClose}>Cancelar</Button>
-            <Button type="submit" disabled={submitting}>
-              {submitting ? 'Guardando...' : 'Registrar'}
-            </Button>
-          </div>
-        </form>
-      </div>
-    </>
+        <div className="flex justify-end gap-2 pt-4 border-t border-g80">
+          <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+          <Button type="submit" loading={submitting}>Registrar</Button>
+        </div>
+      </form>
+    </Drawer>
   )
 }

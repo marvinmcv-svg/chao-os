@@ -2,12 +2,13 @@ import { NextRequest } from 'next/server'
 import { withApiHandler } from '@/lib/api-handler'
 import { requireAuth } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
+import { StudioService } from '@/services/StudioService'
 
 // GET /api/dashboard/alerts — actionable alerts across finance, budget, capacity, pipeline
 export const GET = withApiHandler(async (_req: NextRequest) => {
-  await requireAuth()
+  const user = await requireAuth()
 
-  const alerts: { type: string; severity: 'red' | 'yellow' | 'blue' | 'green'; message: string }[] = []
+  const alerts: { type: string; severity: 'red' | 'yellow' | 'blue' | 'green'; message: string; href?: string }[] = []
 
   // Overdue invoices
   const overdueInvoices = await prisma.invoice.findMany({
@@ -21,7 +22,8 @@ export const GET = withApiHandler(async (_req: NextRequest) => {
     alerts.push({
       type: 'OVERDUE_INVOICE',
       severity: 'red',
-      message: `${inv.number} — ${formatCurrency(inv.amountUSD)}, ${days} días de mora`,
+      message: `${inv.number} · ${inv.project.name} — ${formatCurrency(inv.amountUSD)}, ${days} días de mora`,
+      href: `/finance?invoice=${inv.id}`,
     })
   }
 
@@ -39,23 +41,21 @@ export const GET = withApiHandler(async (_req: NextRequest) => {
         alerts.push({
           type: 'BUDGET_ALERT',
           severity: 'yellow',
-          message: `${proj.code} — fase ${activePhase.phase}: ${Math.round(spent)}% del presupuesto utilizado`,
+          message: `${proj.code} ${proj.name} — fase ${activePhase.phase}: ${Math.round(spent)}% del presupuesto utilizado con ${activePhase.progressPercent}% de avance`,
+          href: `/projects?id=${proj.id}`,
         })
       }
     }
   }
 
-  // Overloaded team members
-  const overloaded = await prisma.teamMember.findMany({
-    where: { utilizationPercent: { gte: 90 } },
-    include: { user: { select: { name: true } } },
-    take: 3,
-  })
-  for (const m of overloaded) {
+  // Overloaded team members — same calculation as the Studio page
+  const capacity = await StudioService.getCapacity({ currentUser: user })
+  for (const m of capacity.members.filter((m) => m.isOverloaded).slice(0, 3)) {
     alerts.push({
       type: 'CAPACITY_ALERT',
       severity: 'yellow',
-      message: `${m.user.name} al ${m.utilizationPercent}% de capacidad — considerar rebalancear`,
+      message: `${m.name} al ${m.utilizationPercent}% de capacidad esta semana — considerar rebalancear`,
+      href: '/studio',
     })
   }
 
@@ -70,6 +70,7 @@ export const GET = withApiHandler(async (_req: NextRequest) => {
       type: 'OPPORTUNITY',
       severity: 'blue',
       message: `${lead.projectName} en negociación — ${lead.closeProbability}% probabilidad`,
+      href: `/bd?lead=${lead.id}`,
     })
   }
 

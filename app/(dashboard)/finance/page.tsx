@@ -1,212 +1,271 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Plus, Search, Eye, FileText, Download } from 'lucide-react'
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Plus, Search, Receipt, Banknote, AlertTriangle, CheckCircle2, Clock3 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
-import { Card, CardContent } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
+import { Tabs, Segmented } from '@/components/ui/Tabs'
+import { PageHeader } from '@/components/ui/PageHeader'
+import { StatCard } from '@/components/ui/StatCard'
+import { EmptyState, ErrorBanner, Skeleton } from '@/components/ui/EmptyState'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table'
 import { InvoiceDetailPanel } from '@/components/finance/InvoiceDetailPanel'
 import { NewInvoiceModal } from '@/components/modals/NewInvoiceModal'
-import { FinanceCharts } from '@/components/finance/FinanceCharts'
+import { FinanceCharts, type CashFlowData, type PnLRow } from '@/components/finance/FinanceCharts'
+import { api } from '@/lib/api-client'
+import { INVOICE_STATUS, meta } from '@/lib/labels'
+import { cn, formatCompact, formatCurrency, formatDate } from '@/lib/utils'
 
 interface Invoice {
   id: string
-  invoiceNumber: string
-  clientName: string
-  projectCode: string
-  amount: number
-  status: 'draft' | 'sent' | 'paid' | 'overdue'
-  issuedDate: string
+  number: string
+  amountUSD: number
+  currency: string
+  status: string
+  issuedAt: string
   dueDate: string
+  paidAmount: number
+  project: { id: string; code: string; name: string }
+  client: { id: string; name: string; company: string }
+  lineItems: { description: string }[]
 }
 
-const MOCK_INVOICES: Invoice[] = [
-  { id: '1', invoiceNumber: 'INV-2025-001', clientName: 'TechCorp SRL', projectCode: 'TC-001', amount: 8500, status: 'paid', issuedDate: '2025-02-01', dueDate: '2025-02-15' },
-  { id: '2', invoiceNumber: 'INV-2025-002', clientName: 'MediaLab SA', projectCode: 'ML-002', amount: 12300, status: 'sent', issuedDate: '2025-02-10', dueDate: '2025-02-25' },
-  { id: '3', invoiceNumber: 'INV-2025-003', clientName: 'RetailPro', projectCode: 'RP-003', amount: 5600, status: 'overdue', issuedDate: '2025-01-15', dueDate: '2025-01-30' },
-  { id: '4', invoiceNumber: 'INV-2025-004', clientName: 'FoodBrand', projectCode: 'FB-004', amount: 9200, status: 'draft', issuedDate: '2025-02-20', dueDate: '2025-03-06' },
-]
+type Filter = 'ALL' | 'OPEN' | 'OVERDUE' | 'PAID' | 'DRAFT'
 
-const MOCK_PNL = [
-  { projectId: 'p1', code: 'TC-001', name: 'TechCorp — Identidad Visual', revenue: 15000, expenses: 4200, laborCost: 6300, netProfit: 4500, margin: 30, hoursLogged: 120 },
-  { projectId: 'p2', code: 'ML-002', name: 'MediaLab — Campaña Q1', revenue: 22000, expenses: 8800, laborCost: 7700, netProfit: 5500, margin: 25, hoursLogged: 200 },
-  { projectId: 'p3', code: 'RP-003', name: 'RetailPro — Rebrand', revenue: 8500, expenses: 2100, laborCost: 3400, netProfit: 3000, margin: 35, hoursLogged: 80 },
-  { projectId: 'p4', code: 'FB-004', name: 'FoodBrand — Packaging', revenue: 18000, expenses: 5400, laborCost: 7200, netProfit: 5400, margin: 30, hoursLogged: 160 },
-  { projectId: 'p5', code: 'NX-005', name: 'Nexus — App MVP', revenue: 35000, expenses: 14200, laborCost: 15400, netProfit: 5400, margin: 15, hoursLogged: 340 },
-]
-
-const MOCK_CASHFLOW = {
-  weekly: [
-    { week: 'S1', expected: 12000, overdue: 0 },
-    { week: 'S2', expected: 8500, overdue: 2300 },
-    { week: 'S3', expected: 15000, overdue: 1200 },
-    { week: 'S4', expected: 9800, overdue: 4500 },
-    { week: 'S5', expected: 22000, overdue: 800 },
-    { week: 'S6', expected: 17500, overdue: 3100 },
-    { week: 'S7', expected: 13000, overdue: 2200 },
-    { week: 'S8', expected: 9000, overdue: 0 },
-    { week: 'S9', expected: 25000, overdue: 5000 },
-    { week: 'S10', expected: 11000, overdue: 1800 },
-    { week: 'S11', expected: 19000, overdue: 900 },
-    { week: 'S12', expected: 7500, overdue: 4200 },
-  ],
-  summary: { totalExpected: 169300, totalOverdue: 25100, invoiceCount: 28 },
+function isPastDue(i: Invoice) {
+  return i.status === 'OVERDUE' || (i.status !== 'PAID' && i.status !== 'DRAFT' && new Date(i.dueDate) < new Date())
 }
 
-const STATUS_CONFIG = {
-  draft: { label: 'Borrador', className: 'bg-g80 text-g40 border-g75' },
-  sent: { label: 'Enviada', className: 'bg-blue-400/10 text-blue-400 border-blue-400/30' },
-  paid: { label: 'Pagada', className: 'bg-green-400/10 text-green-400 border-green-400/30' },
-  overdue: { label: 'Vencida', className: 'bg-red-400/10 text-red-400 border-red-400/30' },
-}
-
-export default function FinancePage() {
-  const [invoices] = useState<Invoice[]>(MOCK_INVOICES)
+function FinanceInner() {
+  const router = useRouter()
+  const params = useSearchParams()
+  const [view, setView] = useState('invoices')
+  const [invoices, setInvoices] = useState<Invoice[] | null>(null)
+  const [pnl, setPnl] = useState<PnLRow[] | null>(null)
+  const [cashflow, setCashflow] = useState<CashFlowData | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
-  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null)
-  const [showNewInvoice, setShowNewInvoice] = useState(false)
-  const [activeView, setActiveView] = useState<'invoices' | 'charts'>('invoices')
+  const [filter, setFilter] = useState<Filter>('ALL')
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [showNew, setShowNew] = useState(false)
 
-  const filteredInvoices = invoices.filter(inv =>
-    inv.invoiceNumber.toLowerCase().includes(search.toLowerCase()) ||
-    inv.clientName.toLowerCase().includes(search.toLowerCase()) ||
-    inv.projectCode.toLowerCase().includes(search.toLowerCase())
-  )
+  useEffect(() => {
+    const id = params.get('invoice')
+    if (id) setSelectedId(id)
+    if (params.get('new')) setShowNew(true)
+  }, [params])
+
+  // Previously this page rendered hard-coded mock invoices from a different
+  // business (TechCorp, MediaLab…) — everything now comes from the API.
+  const loadInvoices = useCallback(async () => {
+    setError(null)
+    try {
+      setInvoices(await api<Invoice[]>('/api/invoices'))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudieron cargar las facturas')
+      setInvoices([])
+    }
+  }, [])
+
+  const loadAnalytics = useCallback(() => {
+    api<PnLRow[]>('/api/finance/pnl').then(setPnl).catch(() => setPnl([]))
+    api<CashFlowData>('/api/finance/cashflow').then(setCashflow).catch(() => setCashflow(null))
+  }, [])
+
+  useEffect(() => { loadInvoices() }, [loadInvoices])
+  useEffect(() => { if (view === 'analytics') loadAnalytics() }, [view, loadAnalytics])
+
+  const stats = useMemo(() => {
+    const list = invoices ?? []
+    const billed = list.filter((i) => i.status !== 'DRAFT')
+    const open = billed.filter((i) => i.status !== 'PAID')
+    const overdue = open.filter(isPastDue)
+    const outstanding = (i: Invoice) => Math.max(0, i.amountUSD - (i.paidAmount || 0))
+    const paid = list.filter((i) => i.status === 'PAID')
+    return {
+      billed: billed.reduce((s, i) => s + i.amountUSD, 0),
+      outstanding: open.reduce((s, i) => s + outstanding(i), 0),
+      openCount: open.length,
+      overdue: overdue.reduce((s, i) => s + outstanding(i), 0),
+      overdueCount: overdue.length,
+      drafts: list.filter((i) => i.status === 'DRAFT').length,
+      paidCount: paid.length,
+    }
+  }, [invoices])
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return (invoices ?? []).filter((i) => {
+      const f =
+        filter === 'ALL' ||
+        (filter === 'OPEN' && i.status !== 'PAID' && i.status !== 'DRAFT') ||
+        (filter === 'OVERDUE' && isPastDue(i)) ||
+        (filter === 'PAID' && i.status === 'PAID') ||
+        (filter === 'DRAFT' && i.status === 'DRAFT')
+      return f && (!q || i.number.toLowerCase().includes(q) || i.client.company.toLowerCase().includes(q) || i.client.name.toLowerCase().includes(q) || i.project.name.toLowerCase().includes(q) || i.project.code.toLowerCase().includes(q))
+    })
+  }, [invoices, search, filter])
+
+  function closePanel() {
+    setSelectedId(null)
+    if (params.get('invoice')) router.replace('/finance')
+  }
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="font-display text-3xl text-white">Finanzas</h1>
-          <p className="text-g40 mt-1 text-sm font-mono">Facturación y control financiero — CHAO OS</p>
-        </div>
-        <div className="flex gap-3">
-          <Button
-            variant={activeView === 'charts' ? 'default' : 'secondary'}
-            size="sm"
-            onClick={() => setActiveView('charts')}
-          >
-            Gráficos
+    <div className="space-y-6">
+      <PageHeader
+        title="Finanzas"
+        subtitle="Facturación por hitos, cobranza y rentabilidad por proyecto"
+        actions={
+          <Button onClick={() => setShowNew(true)}>
+            <Plus className="w-4 h-4" /> Nueva factura
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => setActiveView('invoices')}>
-            Facturas
-          </Button>
-          <Button size="sm" onClick={() => setShowNewInvoice(true)}>
-            <Plus className="w-4 h-4 mr-1.5" />
-            Nueva Factura
-          </Button>
-        </div>
+        }
+      />
+
+      {error && <ErrorBanner message={error} onRetry={loadInvoices} />}
+
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
+        {!invoices ? (
+          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[120px] rounded-lg" />)
+        ) : (
+          <>
+            <StatCard label="Facturado total" icon={Receipt} value={formatCompact(stats.billed)} hint={`${stats.drafts} borrador${stats.drafts !== 1 ? 'es' : ''} sin emitir`} />
+            <StatCard label="Por cobrar" icon={Clock3} value={formatCompact(stats.outstanding)} hint={`${stats.openCount} factura${stats.openCount !== 1 ? 's' : ''} abierta${stats.openCount !== 1 ? 's' : ''}`} />
+            <StatCard label="Vencido" icon={AlertTriangle} value={formatCompact(stats.overdue)} tone={stats.overdue > 0 ? 'red' : 'default'} hint={stats.overdueCount > 0 ? `${stats.overdueCount} requiere${stats.overdueCount === 1 ? '' : 'n'} gestión de cobro` : 'Cartera al día'} hintTone={stats.overdueCount > 0 ? 'red' : 'green'} />
+            <StatCard label="Cobrado" icon={Banknote} value={formatCompact(stats.billed - stats.outstanding)} hint={`${stats.paidCount} factura${stats.paidCount !== 1 ? 's' : ''} pagada${stats.paidCount !== 1 ? 's' : ''}`} hintTone="green" />
+          </>
+        )}
       </div>
 
-      {/* Charts view */}
-      {activeView === 'charts' && (
-        <FinanceCharts pnlData={MOCK_PNL} cashFlowData={MOCK_CASHFLOW} />
-      )}
+      <Tabs
+        tabs={[
+          { id: 'invoices', label: 'Facturas', count: invoices?.length },
+          { id: 'analytics', label: 'Rentabilidad y flujo de caja' },
+        ]}
+        activeTab={view}
+        onTabChange={setView}
+      />
 
-      {/* Invoices view */}
-      {activeView === 'invoices' && (
+      {view === 'invoices' && (
         <>
-          {/* Search */}
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-g40" />
-            <input
-              type="text"
-              placeholder="Buscar por número, cliente o proyecto..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-g85 border border-g80 rounded-md text-sm text-g10 placeholder:text-g40 focus:outline-none focus:border-g75 font-mono"
-            />
+          <div className="flex flex-col lg:flex-row gap-3">
+            <div className="flex-1 relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-g50" />
+              <input
+                type="search"
+                placeholder="Buscar por número, cliente o proyecto…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full h-9 pl-9 pr-3 bg-g90 border border-g80 rounded-md text-sm text-g10 placeholder:text-g50 focus:outline-none focus:ring-2 focus:ring-accent/60"
+              />
+            </div>
+            <div className="overflow-x-auto">
+              <Segmented<Filter>
+                value={filter}
+                onChange={setFilter}
+                options={[
+                  { id: 'ALL', label: 'Todas' },
+                  { id: 'OPEN', label: 'Abiertas' },
+                  { id: 'OVERDUE', label: 'Vencidas' },
+                  { id: 'PAID', label: 'Pagadas' },
+                  { id: 'DRAFT', label: 'Borradores' },
+                ]}
+              />
+            </div>
           </div>
 
-          {/* Invoice list */}
-          <div className="space-y-2">
-            {filteredInvoices.map(invoice => {
-              const status = STATUS_CONFIG[invoice.status]
-              return (
-                <Card key={invoice.id} onClick={() => setSelectedInvoice(invoice)}>
-                  <CardContent className="p-4 flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="p-2 bg-g80 rounded">
-                        <FileText className="w-4 h-4 text-g40" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-mono text-g10">{invoice.invoiceNumber}</p>
-                        <p className="text-sm text-g20">{invoice.clientName}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-6">
-                      <div className="text-right">
-                        <p className="text-sm font-mono text-white">${invoice.amount.toLocaleString()}</p>
-                        <p className="text-xs text-g40">{invoice.projectCode}</p>
-                      </div>
-                      <Badge className={status.className}>{status.label}</Badge>
-                      <Eye className="w-4 h-4 text-g40" />
-                    </div>
-                  </CardContent>
-                </Card>
-              )
-            })}
-
-            {filteredInvoices.length === 0 && (
-              <div className="text-center py-8 text-g40 text-sm font-mono">
-                No se encontraron facturas
-              </div>
+          <div className="bg-g85 border border-g80 rounded-lg overflow-hidden">
+            {!invoices ? (
+              <div className="p-5 space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
+            ) : filtered.length === 0 ? (
+              <EmptyState
+                icon={Receipt}
+                title={invoices.length === 0 ? 'Aún no hay facturas' : 'Ninguna factura coincide con el filtro'}
+                action={invoices.length === 0 ? <Button size="sm" onClick={() => setShowNew(true)}><Plus className="w-4 h-4" /> Nueva factura</Button> : undefined}
+              />
+            ) : (
+              <Table>
+                <TableHeader>
+                  <tr>
+                    <TableHead>Factura</TableHead>
+                    <TableHead>Cliente · proyecto</TableHead>
+                    <TableHead className="hidden md:table-cell">Emitida</TableHead>
+                    <TableHead>Vence</TableHead>
+                    <TableHead className="text-right">Monto</TableHead>
+                    <TableHead className="text-right hidden md:table-cell">Saldo</TableHead>
+                    <TableHead className="text-right">Estado</TableHead>
+                  </tr>
+                </TableHeader>
+                <TableBody>
+                  {filtered.map((inv) => {
+                    const overdue = isPastDue(inv)
+                    const st = overdue && inv.status !== 'OVERDUE' ? { label: 'Vencida', variant: 'red' as const } : meta(INVOICE_STATUS, inv.status)
+                    const balance = inv.status === 'PAID' ? 0 : Math.max(0, inv.amountUSD - (inv.paidAmount || 0))
+                    const days = Math.round((Date.now() - new Date(inv.dueDate).getTime()) / 86_400_000)
+                    return (
+                      <TableRow key={inv.id} onClick={() => setSelectedId(inv.id)}>
+                        <TableCell>
+                          <p className="font-mono text-g10">{inv.number}</p>
+                          <p className="text-xs text-g40 truncate max-w-[220px]">{inv.lineItems?.[0]?.description ?? ''}</p>
+                        </TableCell>
+                        <TableCell>
+                          <p className="text-g10 truncate max-w-[240px]">{inv.client.company}</p>
+                          <p className="text-xs text-g40 truncate max-w-[240px]"><span className="font-mono">{inv.project.code}</span> · {inv.project.name}</p>
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell text-xs font-mono text-g40">{formatDate(inv.issuedAt)}</TableCell>
+                        <TableCell>
+                          <p className={cn('text-xs font-mono', overdue ? 'text-red-300' : 'text-g30')}>{formatDate(inv.dueDate)}</p>
+                          {overdue && <p className="text-2xs font-mono text-red-400">{days} días de mora</p>}
+                        </TableCell>
+                        <TableCell className="text-right font-mono tabular text-white">{formatCurrency(inv.amountUSD)}</TableCell>
+                        <TableCell className="text-right hidden md:table-cell font-mono tabular text-g30">
+                          {balance > 0 ? formatCurrency(balance) : <CheckCircle2 className="w-4 h-4 text-green-400 inline" />}
+                        </TableCell>
+                        <TableCell className="text-right"><Badge variant={st.variant} dot>{st.label}</Badge></TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
             )}
-          </div>
-
-          {/* Stats summary */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Card>
-              <CardContent className="p-4 text-center">
-                <p className="text-xs font-mono text-g40 uppercase">Total Facturado</p>
-                <p className="font-display text-2xl text-white mt-1">
-                  ${invoices.reduce((s, i) => s + i.amount, 0).toLocaleString()}
-                </p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4 text-center">
-                <p className="text-xs font-mono text-g40 uppercase">Pendiente</p>
-                <p className="font-display text-2xl text-yellow-400 mt-1">
-                  ${invoices.filter(i => i.status === 'sent').reduce((s, i) => s + i.amount, 0).toLocaleString()}
-                </p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4 text-center">
-                <p className="text-xs font-mono text-g40 uppercase">Cobrado</p>
-                <p className="font-display text-2xl text-green-400 mt-1">
-                  ${invoices.filter(i => i.status === 'paid').reduce((s, i) => s + i.amount, 0).toLocaleString()}
-                </p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4 text-center">
-                <p className="text-xs font-mono text-g40 uppercase">Vencido</p>
-                <p className="font-display text-2xl text-red-400 mt-1">
-                  ${invoices.filter(i => i.status === 'overdue').reduce((s, i) => s + i.amount, 0).toLocaleString()}
-                </p>
-              </CardContent>
-            </Card>
           </div>
         </>
       )}
 
-      {/* Invoice detail panel */}
-      {selectedInvoice && (
-        <InvoiceDetailPanel
-          invoiceId={selectedInvoice.id}
-          open={true}
-          onClose={() => setSelectedInvoice(null)}
-          onUpdate={() => {}}
-        />
-      )}
+      {view === 'analytics' && (pnl === null ? <Skeleton className="h-96 rounded-lg" /> : <FinanceCharts pnlData={pnl} cashFlowData={cashflow} />)}
 
-      {/* New invoice modal */}
-      {showNewInvoice && (
-        <NewInvoiceModal open={showNewInvoice} onClose={() => setShowNewInvoice(false)} onSuccess={() => setShowNewInvoice(false)} />
-      )}
+      <InvoiceDetailPanel
+        invoiceId={selectedId}
+        open={!!selectedId}
+        onClose={closePanel}
+        onUpdate={() => {
+          loadInvoices()
+          if (view === 'analytics') loadAnalytics()
+        }}
+      />
+
+      <NewInvoiceModal
+        open={showNew}
+        onClose={() => {
+          setShowNew(false)
+          if (params.get('new')) router.replace('/finance')
+        }}
+        onSuccess={(inv) => {
+          setShowNew(false)
+          loadInvoices()
+          if (inv && typeof inv === 'object' && 'id' in inv) setSelectedId((inv as { id: string }).id)
+        }}
+      />
     </div>
+  )
+}
+
+export default function FinancePage() {
+  return (
+    <Suspense fallback={null}>
+      <FinanceInner />
+    </Suspense>
   )
 }

@@ -1143,6 +1143,67 @@ async function main() {
   console.log(`✅ Created ${expenses.length} expenses`)
 
   // =========================================================================
+  // RECENT ACTIVITY — dated relative to "today" so the demo never goes stale
+  // (dashboards, capacity, cash-flow and the workload heatmap all depend on
+  // recent dates; the fixed 2024/25 dates above made every KPI read zero).
+  // =========================================================================
+  const DAY = 86_400_000
+  const today = new Date()
+  today.setHours(12, 0, 0, 0)
+  const rel = (days: number) => new Date(today.getTime() + days * DAY)
+
+  // Tasks: spread due dates across the coming weeks
+  const seededTasks = await prisma.task.findMany({ orderBy: { createdAt: 'asc' } })
+  const taskOffsets = [-2, 4, 9, 12, 16, 23, 30]
+  await Promise.all(
+    seededTasks.map((t, i) => prisma.task.update({ where: { id: t.id }, data: { dueDate: rel(taskOffsets[i % taskOffsets.length]) } }))
+  )
+
+  // Invoices: realistic receivables ageing + payment records for paid ones
+  const invoiceDates: Record<string, { issued: number; due: number; paid?: number }> = {
+    'INV-0142': { issued: -12, due: 18 },
+    'INV-0141': { issued: -75, due: -45 },
+    'INV-0140': { issued: -110, due: -80, paid: -85 },
+    'INV-0139': { issued: -60, due: -30, paid: -38 },
+    'INV-0138': { issued: -150, due: -120, paid: -128 },
+  }
+  for (const [number, d] of Object.entries(invoiceDates)) {
+    const inv = await prisma.invoice.update({
+      where: { number },
+      data: { issuedAt: rel(d.issued), dueDate: rel(d.due), ...(d.paid != null && { paidAt: rel(d.paid) }) },
+    })
+    if (d.paid != null) {
+      await prisma.payment.create({
+        data: { invoiceId: inv.id, amountUSD: inv.amountUSD, paidAt: rel(d.paid), method: 'Transferencia', reference: `TRF-${number.slice(4)}` },
+      })
+    }
+  }
+
+  // Time entries: ~6 weeks of weekday timesheets per architect
+  const activeProjects = projects.filter((p) => p.status !== ProjectStatus.COMPLETED)
+  const loadProfile: Record<string, number> = {} // avg hours/day per person
+  const profile = [8.6, 7.4, 6.2, 8.9, 5.8, 7.0]
+  teamMembers.forEach((u, i) => { loadProfile[u.id] = profile[i % profile.length] })
+  const descriptions = ['Desarrollo de planos', 'Coordinación de especialidades', 'Modelado BIM', 'Reunión con cliente', 'Revisión de detalles', 'Cómputos métricos']
+  const entries: { userId: string; projectId: string; description: string; hours: number; date: Date }[] = []
+  for (let back = 41; back >= 0; back--) {
+    const date = rel(-back)
+    const dow = date.getDay()
+    if (dow === 0 || dow === 6) continue
+    teamMembers.forEach((u, ui) => {
+      const base = loadProfile[u.id]
+      // deterministic pseudo-variation (no Math.random so seeds are reproducible)
+      const wobble = (((back * 7 + ui * 13) % 9) - 4) * 0.25
+      const hours = Math.max(0, Math.round((base + wobble) * 2) / 2)
+      if (hours === 0) return
+      const project = activeProjects[(back + ui) % activeProjects.length]
+      entries.push({ userId: u.id, projectId: project.id, description: descriptions[(back + ui) % descriptions.length], hours, date })
+    })
+  }
+  await prisma.timeEntry.createMany({ data: entries })
+  console.log(`✅ Created ${entries.length} recent time entries + re-dated tasks and invoices`)
+
+  // =========================================================================
   // SUMMARY
   // =========================================================================
   const userCount = await prisma.user.count()

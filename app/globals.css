@@ -4,42 +4,40 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Mirrors the `g` scale in tailwind.config.ts — higher number = darker. */
 :root {
-  /* Grayscale */
+  color-scheme: dark;
+
   --black: #000000;
   --white: #ffffff;
-  --g95: #0a0a0a;   /* app background */
-  --g90: #111111;
-  --g85: #1a1a1a;   /* card background */
-  --g80: #222222;   /* card borders, table rows */
-  --g75: #282828;
-  --g70: #333333;   /* dividers */
-  --g60: #444444;
-  --g50: #555555;   /* disabled */
-  --g40: #666666;   /* labels */
-  --g30: #888888;   /* secondary text */
-  --g20: #aaaaaa;   /* body text */
-  --g10: #dddddd;
-  --g05: #f4f4f4;
+  --g95: #0b0b0a;
+  --g90: #121211;
+  --g85: #181817;
+  --g80: #212120;
+  --g70: #2d2d2b;
+  --g60: #3f3f3c;
+  --g50: #5f5f5b;
+  --g40: #82827d;
+  --g30: #9b9b96;
+  --g20: #c3c3be;
+  --g10: #e6e6e3;
+  --g05: #f4f4f2;
 
-  /* Status colors */
   --green: #4ade80;
   --yellow: #facc15;
   --red: #f87171;
   --blue: #60a5fa;
+  --accent: #d6c7a1;
 
-  /* Typography */
   --font-display: 'DM Serif Display', Georgia, serif;
-  --font-mono: 'DM Mono', 'Courier New', monospace;
-  --font-ui: 'Syne', sans-serif;
+  --font-mono: 'DM Mono', ui-monospace, monospace;
+  --font-ui: 'Syne', system-ui, sans-serif;
 
-  /* Layout */
   --sidebar-w: 240px;
   --topbar-h: 56px;
   --radius: 6px;
 }
 
-/* Base styles */
 html {
   font-family: var(--font-ui);
   background-color: var(--g95);
@@ -48,37 +46,66 @@ html {
 
 body {
   min-height: 100vh;
+  background-color: var(--g95);
+  /* Subtle drafting-grid texture behind the workspace. */
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+  background-size: 48px 48px;
 }
 
-/* Scrollbar styling */
+::selection {
+  background: rgba(214, 199, 161, 0.3);
+  color: var(--white);
+}
+
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--g90);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--g60);
-  border-radius: 3px;
+  background: var(--g70);
+  border-radius: 8px;
+  border: 2px solid var(--g95);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--g50);
+  background: var(--g60);
 }
 
-/* Focus visible */
 *:focus-visible {
-  outline: 2px solid var(--blue);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-/* Typography classes */
+/* Native date / select controls on dark backgrounds */
+input[type='date']::-webkit-calendar-picker-indicator {
+  filter: invert(0.7);
+  cursor: pointer;
+}
+select option {
+  background: var(--g90);
+  color: var(--g20);
+}
+
 .font-display { font-family: var(--font-display); }
 .font-mono { font-family: var(--font-mono); }
 .font-ui { font-family: var(--font-ui); }
 
+/* Tabular numbers for every figure in the app */
+.tabular { font-variant-numeric: tabular-nums; }
+
 /* Status badge backgrounds (subtle) */
-.status-green { background-color: rgba(74, 222, 128, 0.1); color: var(--green); }
-.status-yellow { background-color: rgba(250, 204, 21, 0.1); color: var(--yellow); }
-.status-red { background-color: rgba(248, 113, 113, 0.1); color: var(--red); }
-.status-blue { background-color: rgba(96, 165, 250, 0.1); color: var(--blue); }
+.status-green { background-color: rgba(74, 222, 128, 0.1); color: var(--green); box-shadow: inset 0 0 0 1px rgba(74, 222, 128, 0.2); }
+.status-yellow { background-color: rgba(250, 204, 21, 0.1); color: var(--yellow); box-shadow: inset 0 0 0 1px rgba(250, 204, 21, 0.2); }
+.status-red { background-color: rgba(248, 113, 113, 0.1); color: var(--red); box-shadow: inset 0 0 0 1px rgba(248, 113, 113, 0.2); }
+.status-blue { background-color: rgba(96, 165, 250, 0.1); color: var(--blue); box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.2); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

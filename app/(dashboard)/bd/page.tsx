@@ -1,220 +1,195 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { Suspense, useCallback, useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Plus, Search, Target, Timer, Trophy, TrendingUp } from 'lucide-react'
 import { Tabs } from '@/components/ui/Tabs'
+import { Button } from '@/components/ui/Button'
+import { PageHeader } from '@/components/ui/PageHeader'
+import { StatCard } from '@/components/ui/StatCard'
+import { Panel } from '@/components/ui/Card'
+import { Skeleton } from '@/components/ui/EmptyState'
 import { KanbanBoard } from '@/components/bd/KanbanBoard'
 import { NewLeadModal } from '@/components/bd/NewLeadModal'
 import { LeadDetailModal } from '@/components/bd/LeadDetailModal'
 import { ContactsTable } from '@/components/bd/ContactsTable'
-import { Card, CardContent } from '@/components/ui/Card'
-import { Badge } from '@/components/ui/Badge'
-import { formatCurrency } from '@/lib/utils'
+import { api } from '@/lib/api-client'
+import { CHART } from '@/lib/chart-theme'
+import { PIPELINE_STAGE } from '@/lib/labels'
+import { formatCompact, formatCurrency } from '@/lib/utils'
 
-const TABS = [
-  { id: 'pipeline', label: 'Pipeline' },
-  { id: 'contacts', label: 'Contactos' },
-  { id: 'analytics', label: 'Analítica' },
-  { id: 'settings', label: 'Configuración' },
-]
+interface FunnelRow { stage: string; count: number; totalValue: number; weightedValue: number }
+interface FunnelSummary { totalLeads: number; wonLeads: number; lostLeads: number; winRate: number; avgCycleDays: number }
 
-interface FunnelData {
-  stage: string
-  count: number
-  totalValue: number
-  weightedValue: number
-}
-
-interface FunnelSummary {
-  totalLeads: number
-  wonLeads: number
-  lostLeads: number
-  winRate: number
-  avgCycleDays: number
-}
-
-export default function BDPage() {
-  const [activeTab, setActiveTab] = useState('pipeline')
-  const [showNewLead, setShowNewLead] = useState(false)
+function BDInner() {
+  const router = useRouter()
+  const params = useSearchParams()
+  const [tab, setTab] = useState('pipeline')
+  const [showNew, setShowNew] = useState(false)
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null)
-  const [kanbanRefresh, setKanbanRefresh] = useState(0)
-  const [funnelData, setFunnelData] = useState<FunnelData[]>([])
-  const [funnelSummary, setFunnelSummary] = useState<FunnelSummary | null>(null)
+  const [refresh, setRefresh] = useState(0)
+  const [search, setSearch] = useState('')
+  const [funnel, setFunnel] = useState<FunnelRow[] | null>(null)
+  const [summary, setSummary] = useState<FunnelSummary | null>(null)
 
   useEffect(() => {
-    if (activeTab === 'analytics') {
-      fetchFunnel()
-    }
-  }, [activeTab])
+    const id = params.get('lead')
+    if (id) setSelectedLeadId(id)
+    if (params.get('new')) setShowNew(true)
+  }, [params])
 
-  async function fetchFunnel() {
-    try {
-      const res = await fetch('/api/leads/funnel')
-      const json = await res.json()
-      if (json.success) {
-        setFunnelData(json.data.funnel)
-        setFunnelSummary(json.data.summary)
-      }
-    } catch (e) {
-      console.error('Failed to fetch funnel', e)
-    }
-  }
+  const loadFunnel = useCallback(() => {
+    api<{ funnel: FunnelRow[]; summary: FunnelSummary }>('/api/leads/funnel')
+      .then((d) => {
+        setFunnel(d.funnel)
+        setSummary(d.summary)
+      })
+      .catch(() => setFunnel([]))
+  }, [])
 
-  function handleLeadCreated(_lead: unknown) {
-    setShowNewLead(false)
-    setKanbanRefresh(n => n + 1)
-  }
+  useEffect(loadFunnel, [loadFunnel, refresh])
 
-  function handleCardClick(lead: { id: string }) {
-    setSelectedLeadId(lead.id)
-  }
+  const bump = () => setRefresh((n) => n + 1)
+  const open = (funnel ?? []).filter((r) => r.stage !== 'WON' && r.stage !== 'LOST')
+  const openValue = open.reduce((s, r) => s + r.totalValue, 0)
+  const weighted = open.reduce((s, r) => s + r.weightedValue, 0)
+  const openCount = open.reduce((s, r) => s + r.count, 0)
+  const maxStageValue = Math.max(1, ...(funnel ?? []).map((r) => r.totalValue))
 
-  function handleLeadConvert(leadId: string) {
+  function closeLead() {
     setSelectedLeadId(null)
-    setKanbanRefresh(n => n + 1)
-  }
-
-  function handleStageChange(_leadId: string, _stage: string) {
-    setKanbanRefresh(n => n + 1)
+    if (params.get('lead')) router.replace('/bd')
   }
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="font-display text-3xl text-white">Business Development</h1>
-        <p className="text-g40 mt-1 text-sm font-mono">Pipeline de oportunidades — CHAO OS</p>
+      <PageHeader
+        title="Business Development"
+        subtitle="Pipeline de oportunidades, calificación Go / No-Go y conversión a proyecto"
+        actions={
+          <Button onClick={() => setShowNew(true)}>
+            <Plus className="w-4 h-4" /> Nuevo lead
+          </Button>
+        }
+      />
+
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
+        {!summary ? (
+          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[120px] rounded-lg" />)
+        ) : (
+          <>
+            <StatCard label="Pipeline abierto" icon={Target} value={formatCompact(openValue)} hint={`${openCount} oportunidades activas`} />
+            <StatCard label="Ponderado" icon={TrendingUp} value={formatCompact(weighted)} hint="Valor × probabilidad de cierre" />
+            {summary.wonLeads + summary.lostLeads > 0 ? (
+              <StatCard label="Tasa de cierre" icon={Trophy} value={`${summary.winRate}%`} hint={`${summary.wonLeads} ganados · ${summary.lostLeads} perdidos`} tone={summary.winRate >= 40 ? 'green' : 'default'} />
+            ) : (
+              <StatCard label="Tasa de cierre" icon={Trophy} value="—" hint="Aún no hay leads cerrados" />
+            )}
+            <StatCard label="Ciclo promedio" icon={Timer} value={summary.wonLeads > 0 ? `${summary.avgCycleDays}d` : '—'} hint={summary.wonLeads > 0 ? 'Desde el alta hasta ganar' : 'Se calcula al ganar el primer lead'} />
+          </>
+        )}
       </div>
 
-      {/* Tab bar */}
-      <Tabs tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab} />
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+        <Tabs
+          className="flex-1"
+          tabs={[
+            { id: 'pipeline', label: 'Pipeline' },
+            { id: 'contacts', label: 'Contactos' },
+            { id: 'analytics', label: 'Embudo' },
+          ]}
+          activeTab={tab}
+          onTabChange={setTab}
+        />
+        {tab === 'pipeline' && (
+          <div className="relative sm:w-72 sm:mb-2">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-g50" />
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Filtrar leads…"
+              className="w-full h-9 pl-9 pr-3 bg-g90 border border-g80 rounded-md text-sm text-g10 placeholder:text-g50 focus:outline-none focus:ring-2 focus:ring-accent/60"
+            />
+          </div>
+        )}
+      </div>
 
-      {/* Pipeline tab */}
-      {activeTab === 'pipeline' && (
-        <KanbanBoard
-          onCardClick={handleCardClick}
-          onNewLead={() => setShowNewLead(true)}
-          refreshTrigger={kanbanRefresh}
+      {tab === 'pipeline' && (
+        <KanbanBoard onCardClick={(l) => setSelectedLeadId(l.id)} onNewLead={() => setShowNew(true)} refreshTrigger={refresh} filter={search} />
+      )}
+
+      {tab === 'contacts' && (
+        <ContactsTable
+          onContactClick={(c) => {
+            if (c.type === 'lead') setSelectedLeadId(c.id)
+            else router.push(`/clients?id=${c.id}`)
+          }}
         />
       )}
 
-      {/* Contacts tab */}
-      {activeTab === 'contacts' && (
-        <div className="space-y-4">
-          <div className="text-g50 text-sm mb-2">Los clientes se muestran con fines de referencia. Para ver detalles del cliente, use la sección de Proyectos.</div>
-          <ContactsTable onContactClick={(contact) => {
-            if (contact.type === 'lead') {
-              setSelectedLeadId(contact.id)
-            }
-          }} />
-        </div>
-      )}
-
-      {/* Analytics tab */}
-      {activeTab === 'analytics' && (
-        <div className="space-y-6">
-          {/* Summary cards */}
-          {funnelSummary && (
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <Card>
-                <CardContent className="p-5">
-                  <p className="text-xs font-mono text-g40 uppercase">Total Leads</p>
-                  <p className="font-display text-3xl text-white mt-2">{funnelSummary.totalLeads}</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-5">
-                  <p className="text-xs font-mono text-g40 uppercase">Tasa de Cierre</p>
-                  <p className="font-display text-3xl text-white mt-2">{funnelSummary.winRate}%</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-5">
-                  <p className="text-xs font-mono text-g40 uppercase">Ciclo Promedio</p>
-                  <p className="font-display text-3xl text-white mt-2">{funnelSummary.avgCycleDays}d</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-5">
-                  <p className="text-xs font-mono text-g40 uppercase">Ganados / Perdidos</p>
-                  <p className="font-display text-3xl text-white mt-2">
-                    <span className="text-green-400">{funnelSummary.wonLeads}</span>
-                    {' / '}
-                    <span className="text-red-400">{funnelSummary.lostLeads}</span>
-                  </p>
-                </CardContent>
-              </Card>
+      {tab === 'analytics' && (
+        <Panel title="Embudo por etapa" action={<span className="text-2xs font-mono text-g40">barra = valor total · relleno = ponderado</span>}>
+          {!funnel ? (
+            <div className="p-5"><Skeleton className="h-64" /></div>
+          ) : (
+            <div className="p-5 space-y-3">
+              {funnel.map((row) => {
+                const m = PIPELINE_STAGE[row.stage]
+                return (
+                  <div key={row.stage} className="grid grid-cols-[110px_1fr_auto] sm:grid-cols-[140px_1fr_200px] items-center gap-4">
+                    <div>
+                      <p className="text-sm text-g10">{m?.label ?? row.stage}</p>
+                      <p className="text-2xs font-mono text-g40">{row.count} lead{row.count !== 1 ? 's' : ''}</p>
+                    </div>
+                    <div className="h-7 bg-g90 rounded relative overflow-hidden" title={`${formatCurrency(row.totalValue)} total · ${formatCurrency(row.weightedValue)} ponderado`}>
+                      <div className="absolute inset-y-0 left-0 rounded" style={{ width: `${(row.totalValue / maxStageValue) * 100}%`, background: `${CHART.blue}40` }} />
+                      <div className="absolute inset-y-0 left-0 rounded" style={{ width: `${(row.weightedValue / maxStageValue) * 100}%`, background: CHART.blue }} />
+                    </div>
+                    <div className="text-right font-mono tabular">
+                      <p className="text-sm text-g10">{formatCompact(row.totalValue)}</p>
+                      <p className="text-2xs text-g40">pond. {formatCompact(row.weightedValue)}</p>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           )}
-
-          {/* Funnel table */}
-          {funnelData.length > 0 && (
-            <div className="bg-g85 border border-g80 rounded-md overflow-hidden">
-              <div className="px-4 py-3 border-b border-g80">
-                <h2 className="font-mono text-sm text-g40 uppercase tracking-wider">Funnel por Etapa</h2>
-              </div>
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-g80">
-                    <th className="px-4 py-3 text-left text-xs font-mono text-g40 uppercase">Etapa</th>
-                    <th className="px-4 py-3 text-right text-xs font-mono text-g40 uppercase">Leads</th>
-                    <th className="px-4 py-3 text-right text-xs font-mono text-g40 uppercase">Valor Total</th>
-                    <th className="px-4 py-3 text-right text-xs font-mono text-g40 uppercase">Valor Ponderado</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-g80/50">
-                  {funnelData.map(row => (
-                    <tr key={row.stage} className="hover:bg-g80/30">
-                      <td className="px-4 py-3">
-                        <Badge variant={
-                          row.stage === 'WON' ? 'green' :
-                          row.stage === 'LOST' ? 'red' :
-                          row.stage === 'QUALIFIED' ? 'blue' :
-                          'default'
-                        }>
-                          {row.stage.replace('_', ' ')}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3 text-right text-sm font-mono text-g20">{row.count}</td>
-                      <td className="px-4 py-3 text-right text-sm font-mono text-g20">{formatCurrency(row.totalValue)}</td>
-                      <td className="px-4 py-3 text-right text-sm font-mono text-white">{formatCurrency(row.weightedValue)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+        </Panel>
       )}
 
-      {/* Settings tab */}
-      {activeTab === 'settings' && (
-        <div className="space-y-4">
-          <div className="bg-g85 border border-g80 rounded-md p-6">
-            <h2 className="font-mono text-sm text-g40 uppercase tracking-wider mb-4">Configuración BD</h2>
-            <div className="space-y-3 text-sm text-g30">
-              <p>• Umbral Go/No-Go: 70 puntos para recomendación GO</p>
-              <p>• Probabilidad automática en etapa WON: 100%</p>
-              <p>• Notificaciones de leads vencidos: activas</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modals */}
       <NewLeadModal
-        open={showNewLead}
-        onClose={() => setShowNewLead(false)}
-        onSuccess={handleLeadCreated}
+        open={showNew}
+        onClose={() => {
+          setShowNew(false)
+          if (params.get('new')) router.replace('/bd')
+        }}
+        onSuccess={(lead: { id?: string } | null) => {
+          setShowNew(false)
+          bump()
+          if (lead?.id) setSelectedLeadId(lead.id)
+        }}
       />
 
       <LeadDetailModal
         leadId={selectedLeadId}
         open={!!selectedLeadId}
-        onClose={() => setSelectedLeadId(null)}
-        onConvert={handleLeadConvert}
-        onStageChange={handleStageChange}
-        onUpdate={() => setKanbanRefresh(n => n + 1)}
+        onClose={closeLead}
+        onConvert={(_id, projectId) => {
+          bump()
+          if (projectId) router.push(`/projects?id=${projectId}`)
+        }}
+        onStageChange={bump}
+        onUpdate={bump}
       />
     </div>
+  )
+}
+
+export default function BDPage() {
+  return (
+    <Suspense fallback={null}>
+      <BDInner />
+    </Suspense>
   )
 }

@@ -53,11 +53,9 @@ export type PortalProjectData = {
   }
   phases: Array<{
     id: string
-    projectId: string
     phase: ProjectPhase
     label: string
     budgetUSD: number
-    spentUSD: number
     progressPercent: number
     status: string
     startDate: Date | null
@@ -179,13 +177,17 @@ export const PortalService = {
     const project = await prisma.project.findFirst({
       where: { id: projectId, clientId: client.id },
       include: {
-        phases: { orderBy: { phase: 'asc' } },
+        // Curated: never expose internal cost (spentUSD) to the client.
+        phases: {
+          orderBy: { phase: 'asc' },
+          select: { id: true, phase: true, label: true, budgetUSD: true, progressPercent: true, status: true, startDate: true, endDate: true },
+        },
         milestones: {
           where: { status: { not: 'rejected' } },
           orderBy: { dueDate: 'asc' },
         },
         invoices: {
-          where: { status: { in: ['SENT', 'PENDING', 'PAID'] } },
+          where: { status: { in: ['SENT', 'PENDING', 'OVERDUE', 'PAID'] } },
           orderBy: { issuedAt: 'desc' },
           select: {
             id: true,

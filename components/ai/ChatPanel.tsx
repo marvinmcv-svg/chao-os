@@ -22,10 +22,18 @@ const CONTEXT_LABELS: Record<ChatContext, string> = {
 }
 
 interface ChatPanelProps {
-  onClose: () => void
+  onClose?: () => void
+  /** Render inline inside the page instead of as a full-height drawer. */
+  embedded?: boolean
 }
 
-export function ChatPanel({ onClose }: ChatPanelProps) {
+const SUGGESTIONS = [
+  '¿Qué proyectos están consumiendo honorario más rápido que su avance?',
+  '¿Qué facturas debo cobrar esta semana?',
+  'Resume el pipeline y dime qué lead priorizar',
+]
+
+export function ChatPanel({ onClose, embedded = false }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [context, setContext] = useState<ChatContext>('general')
@@ -160,25 +168,24 @@ export function ChatPanel({ onClose }: ChatPanelProps) {
     setContextOpen(false)
   }
 
-  return (
-    <>
-      <div className="fixed inset-0 bg-black/40 z-40" onClick={onClose} />
-      <div className="fixed right-0 top-0 h-screen w-[400px] bg-g95 border-l border-g80 z-50 flex flex-col">
+  const body = (
+      <div className={embedded ? 'h-[600px] bg-g85 border border-g80 rounded-lg flex flex-col overflow-hidden' : 'fixed right-0 top-0 h-[100dvh] w-full sm:w-[420px] bg-g90 border-l border-g70 z-[56] flex flex-col shadow-panel animate-slide-in-right'}>
 
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-g80">
           <div className="flex items-center gap-2">
-            <Bot className="w-5 h-5 text-blue-400" />
+            <Bot className="w-5 h-5 text-accent" />
             <span className="font-mono text-sm text-g20 uppercase">Asistente IA</span>
           </div>
-          <button
+          {!embedded && <button
             onClick={onClose}
+            aria-label="Cerrar"
             className="p-1 text-g40 hover:text-white transition-colors"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 6L6 18M6 6l12 12" />
             </svg>
-          </button>
+          </button>}
         </div>
 
         {/* Messages */}
@@ -187,9 +194,20 @@ export function ChatPanel({ onClose }: ChatPanelProps) {
             <div className="text-center py-12">
               <Bot className="w-12 h-12 text-g50 mx-auto mb-3" />
               <p className="text-g40 text-sm font-mono">¿En qué te puedo ayudar?</p>
-              <p className="text-g60 text-xs mt-1">
-                Usa el selector de contexto para asistencia especializada.
+              <p className="text-g40 text-xs mt-1">
+                Responde con los datos en vivo del estudio. Elige un contexto para respuestas especializadas.
               </p>
+              <div className="mt-5 flex flex-col items-center gap-2">
+                {SUGGESTIONS.map((q) => (
+                  <button
+                    key={q}
+                    onClick={() => { setInput(q); inputRef.current?.focus() }}
+                    className="text-xs text-g20 px-3 py-1.5 rounded-full border border-g70 hover:border-accent/60 hover:text-white transition-colors"
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
@@ -204,19 +222,19 @@ export function ChatPanel({ onClose }: ChatPanelProps) {
               <div
                 className={cn(
                   'flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center',
-                  msg.role === 'user' ? 'bg-blue-600/30' : 'bg-g80'
+                  msg.role === 'user' ? 'bg-accent-muted' : 'bg-g80'
                 )}
               >
                 {msg.role === 'user'
-                  ? <User className="w-4 h-4 text-blue-400" />
+                  ? <User className="w-4 h-4 text-accent" />
                   : <Bot className="w-4 h-4 text-g30" />}
               </div>
 
               <div
                 className={cn(
-                  'max-w-[75%] rounded-lg px-3 py-2 text-sm font-mono leading-relaxed',
+                  'max-w-[75%] rounded-lg px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap',
                   msg.role === 'user'
-                    ? 'bg-blue-600/20 border border-blue-600/40 text-white'
+                    ? 'bg-g70 border border-g60 text-white'
                     : msg.error
                     ? 'bg-red-900/20 border border-red-800 text-red-400'
                     : 'bg-g85 border border-g80 text-g20',
@@ -272,7 +290,7 @@ export function ChatPanel({ onClose }: ChatPanelProps) {
                     onClick={() => handleContextSelect(ctx)}
                     className={cn(
                       'block w-full text-left px-3 py-2 text-xs font-mono hover:bg-g80 transition-colors',
-                      ctx === context ? 'text-blue-400 bg-g80' : 'text-g30'
+                      ctx === context ? 'text-accent bg-g80' : 'text-g30'
                     )}
                   >
                     {CONTEXT_LABELS[ctx]}
@@ -307,19 +325,26 @@ export function ChatPanel({ onClose }: ChatPanelProps) {
               onClick={handleSend}
               disabled={!input.trim() || loading}
               className={cn(
-                'flex-shrink-0 w-10 h-10 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed',
+                'flex-shrink-0 w-10 h-10 rounded bg-g05 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed',
                 'flex items-center justify-center transition-colors'
               )}
             >
-              <Send className="w-4 h-4 text-white" />
+              <Send className="w-4 h-4 text-black" />
             </button>
           </div>
 
           <p className="text-g60 text-[10px] font-mono text-center">
-            Enter+Shift = nueva línea · Ctrl+Enter = enviar
+            Enter = nueva línea · Ctrl/⌘ + Enter = enviar
           </p>
         </div>
       </div>
+  )
+
+  if (embedded) return body
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/60 z-[55]" onClick={onClose} />
+      {body}
     </>
   )
 }

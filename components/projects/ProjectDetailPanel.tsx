@@ -1,12 +1,17 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { X, User, Calendar, DollarSign, FolderKanban, CheckCircle, FileText } from 'lucide-react'
-import { Button } from '@/components/ui/Button'
+import { useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
+import { useSession } from 'next-auth/react'
+import { CalendarDays, CheckCircle2, Circle, FileText, Receipt, Users, ArrowUpRight } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { ProgressBar } from '@/components/ui/ProgressBar'
 import { Avatar } from '@/components/ui/Avatar'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { Drawer } from '@/components/ui/Drawer'
+import { Skeleton, ErrorBanner } from '@/components/ui/EmptyState'
+import { api } from '@/lib/api-client'
+import { CONTRACT_TYPE, INVOICE_STATUS, PHASE, PHASE_STATUS, PROJECT_STATUS, PROJECT_TYPE, TASK_STATUS, meta } from '@/lib/labels'
+import { cn, formatCompact, formatCurrency, formatDate } from '@/lib/utils'
 import { DocumentUpload } from './DocumentUpload'
 import { DocumentList } from './DocumentList'
 
@@ -23,22 +28,13 @@ interface ProjectDetail {
   contractType: string
   startDate: string
   estimatedEndDate: string
-  client: { name: string; company: string; email: string; phone: string }
+  client: { id: string; name: string; company: string; email: string; phone: string }
   projectManager: { id: string; name: string; email: string; avatarInitials: string; role: string }
-  phases: {
-    id: string
-    phase: string
-    label: string
-    budgetUSD: number
-    spentUSD: number
-    progressPercent: number
-    status: string
-    startDate: string | null
-    endDate: string | null
-  }[]
-  milestones: { id: string; label: string; dueDate: string; status: string }[]
+  phases: { id: string; phase: string; label: string; budgetUSD: number; spentUSD: number; progressPercent: number; status: string }[]
+  milestones: { id: string; label: string; dueDate: string; status: string; phase: string | null }[]
   teamMembers: { role: string; user: { id: string; name: string; avatarInitials: string } }[]
-  tasks: { id: string; title: string; status: string; dueDate: string; assignedTo: { name: string; avatarInitials: string } }[]
+  tasks: { id: string; title: string; status: string; priority: string; dueDate: string; assignedTo: { name: string; avatarInitials: string } }[]
+  invoices: { id: string; number: string; amountUSD: number; status: string; dueDate: string }[]
   _count: { tasks: number; documents: number }
 }
 
@@ -49,215 +45,305 @@ interface Props {
   onUpdate: () => void
 }
 
+function Section({ title, icon: Icon, children, action }: { title: string; icon?: React.ElementType; children: React.ReactNode; action?: React.ReactNode }) {
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-2xs font-mono text-g40 uppercase tracking-[0.14em] flex items-center gap-2">
+          {Icon && <Icon className="w-3.5 h-3.5" />}
+          {title}
+        </h3>
+        {action}
+      </div>
+      {children}
+    </section>
+  )
+}
+
+function PhaseProgressInput({ value, onCommit, disabled }: { value: number; onCommit: (v: number) => void; disabled?: boolean }) {
+  const [v, setV] = useState(String(value))
+  useEffect(() => setV(String(value)), [value])
+  const commit = () => {
+    const n = Math.max(0, Math.min(100, Math.round(Number(v))))
+    if (Number.isFinite(n) && n !== value) onCommit(n)
+    else setV(String(value))
+  }
+  return (
+    <div className="flex items-center gap-1">
+      <input
+        type="number"
+        min={0}
+        max={100}
+        value={v}
+        disabled={disabled}
+        onChange={(e) => setV(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
+        aria-label="Avance de fase (%)"
+        className="w-14 h-7 px-2 text-right text-xs font-mono bg-g95 border border-g70 rounded text-g10 focus:outline-none focus:ring-1 focus:ring-accent/60 tabular"
+      />
+      <span className="text-2xs font-mono text-g40">%</span>
+    </div>
+  )
+}
+
 export function ProjectDetailPanel({ projectId, open, onClose, onUpdate }: Props) {
+  const { data: session } = useSession()
   const [project, setProject] = useState<ProjectDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const controllerRef = useRef<AbortController | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [docsVersion, setDocsVersion] = useState(0)
 
   const fetchProject = useCallback(async () => {
     if (!projectId) return
-    controllerRef.current?.abort()
-    controllerRef.current = new AbortController()
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`/api/projects/${projectId}`, { signal: controllerRef.current.signal })
-      const json = await res.json()
-      if (json.success) setProject(json.data)
-      else setError(json.error || 'Error al cargar el proyecto')
+      setProject(await api<ProjectDetail>(`/api/projects/${projectId}`))
     } catch (e) {
-      if (e instanceof Error && e.name === 'AbortError') return
-      setError('Error al cargar el proyecto')
+      setError(e instanceof Error ? e.message : 'Error al cargar el proyecto')
     } finally {
       setLoading(false)
     }
   }, [projectId])
 
   useEffect(() => {
-    if (projectId) {
-      fetchProject()
+    if (projectId && open) fetchProject()
+    if (!open) setProject(null)
+  }, [projectId, open, fetchProject])
+
+  async function mutate(fn: () => Promise<unknown>) {
+    setSaving(true)
+    setError(null)
+    try {
+      await fn()
+      await fetchProject()
+      onUpdate()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo guardar')
+    } finally {
+      setSaving(false)
     }
-  }, [projectId, fetchProject])
+  }
 
-  // Escape key closes panel
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    if (open) document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [open, onClose])
-
-  if (!open) return null
+  const st = project ? meta(PROJECT_STATUS, project.status) : null
+  const spentPct = project && project.totalBudgetUSD > 0 ? Math.round((project.totalSpentUSD / project.totalBudgetUSD) * 100) : 0
+  const ev = project ? (project.totalBudgetUSD * project.overallProgressPercent) / 100 : 0
+  const cpi = project && project.totalSpentUSD > 0 ? ev / project.totalSpentUSD : null
+  const days = project ? Math.ceil((new Date(project.estimatedEndDate).getTime() - Date.now()) / 86_400_000) : 0
 
   return (
-    <>
-      {/* Backdrop */}
-      <div className="fixed inset-0 bg-black/40 z-40" onClick={onClose} />
-      
-      {/* Panel */}
-      <div className="fixed right-0 top-0 h-screen w-[520px] bg-g90 border-l border-g80 z-50 overflow-y-auto">
-        {/* Header */}
-        <div className="sticky top-0 bg-g90 border-b border-g80 px-6 py-4 flex items-center justify-between">
-          <div>
-            <p className="text-xs font-mono text-g40">{project?.code}</p>
-            <h2 className="font-display text-xl text-white mt-0.5">{project?.name}</h2>
-          </div>
-          <button onClick={onClose} className="p-2 text-g40 hover:text-white transition-colors">
-            <X className="w-5 h-5" />
-          </button>
+    <Drawer
+      open={open}
+      onClose={onClose}
+      width="lg"
+      eyebrow={project ? `${project.code} · ${PROJECT_TYPE[project.type] ?? project.type}` : 'Proyecto'}
+      title={project?.name ?? (loading ? 'Cargando…' : '')}
+    >
+      {error && <div className="px-6 pt-4"><ErrorBanner message={error} onRetry={fetchProject} /></div>}
+
+      {loading && !project ? (
+        <div className="p-6 space-y-4">
+          <Skeleton className="h-20" />
+          <Skeleton className="h-40" />
+          <Skeleton className="h-24" />
         </div>
+      ) : project && st ? (
+        <div className="p-6 space-y-7">
+          {/* Status row */}
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={project.status}
+              disabled={saving}
+              onChange={(e) => mutate(() => api(`/api/projects/${project.id}`, { method: 'PUT', body: JSON.stringify({ status: e.target.value }) }))}
+              aria-label="Estado del proyecto"
+              className="h-7 pl-2 pr-6 text-2xs font-mono uppercase tracking-wide rounded bg-g80 border border-g70 text-g10 focus:outline-none focus:ring-1 focus:ring-accent/60"
+            >
+              {Object.entries(PROJECT_STATUS).map(([k, v]) => (
+                <option key={k} value={k}>{v.label}</option>
+              ))}
+            </select>
+            <Badge variant="outline">Fase actual · {PHASE[project.currentPhase]?.label ?? project.currentPhase}</Badge>
+            <Badge variant="outline">{CONTRACT_TYPE[project.contractType] ?? project.contractType}</Badge>
+          </div>
 
-        {loading ? (
-          <div className="p-6 text-center text-g40 text-sm font-mono">Cargando...</div>
-        ) : error ? (
-          <div className="p-6 text-center text-red-500 text-sm">{error}</div>
-        ) : project ? (
-          <div className="p-6 space-y-6">
-            {/* Status + Phase */}
-            <div className="flex items-center gap-3">
-              <Badge variant={project.status === 'ON_TRACK' ? 'green' : project.status === 'AT_RISK' ? 'yellow' : 'red'}>
-                {project.status.replace('_', ' ')}
-              </Badge>
-              <Badge variant="blue">{project.currentPhase}</Badge>
+          {/* KPI tiles */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-g80 border border-g80 rounded-lg overflow-hidden">
+            {[
+              { l: 'Honorario', v: formatCompact(project.totalBudgetUSD) },
+              { l: 'Consumido', v: `${spentPct}%`, tone: spentPct > 100 ? 'text-red-400' : spentPct > project.overallProgressPercent + 10 ? 'text-yellow-400' : '' },
+              { l: 'Valor ganado', v: formatCompact(ev) },
+              { l: 'IDC', v: cpi == null ? '—' : cpi.toFixed(2), tone: cpi == null ? '' : cpi < 0.85 ? 'text-red-400' : cpi < 1 ? 'text-yellow-400' : 'text-green-400' },
+            ].map((k) => (
+              <div key={k.l} className="bg-g85 p-3">
+                <p className="text-2xs font-mono text-g40 uppercase tracking-wider">{k.l}</p>
+                <p className={cn('font-display text-2xl text-white mt-1 tabular', k.tone)}>{k.v}</p>
+              </div>
+            ))}
+          </div>
+
+          <div>
+            <div className="flex justify-between text-2xs font-mono text-g40 mb-1.5">
+              <span>Avance general {project.overallProgressPercent}%</span>
+              <span className={days < 0 ? 'text-red-300' : ''}>
+                {formatDate(project.startDate)} → {formatDate(project.estimatedEndDate)} · {days < 0 ? `${-days} días de atraso` : `${days} días restantes`}
+              </span>
             </div>
+            <ProgressBar size="md" value={project.overallProgressPercent} marker={spentPct} variant={spentPct > 100 ? 'red' : 'default'} />
+          </div>
 
-            {/* Quick stats */}
-            <div className="grid grid-cols-3 gap-4">
-              <div className="bg-g85 border border-g80 rounded-md p-3">
-                <p className="text-xs font-mono text-g40">Presupuesto</p>
-                <p className="text-lg font-mono text-white mt-1">{formatCurrency(project.totalBudgetUSD)}</p>
-              </div>
-              <div className="bg-g85 border border-g80 rounded-md p-3">
-                <p className="text-xs font-mono text-g40">Gastado</p>
-                <p className="text-lg font-mono text-g20 mt-1">{formatCurrency(project.totalSpentUSD)}</p>
-              </div>
-              <div className="bg-g85 border border-g80 rounded-md p-3">
-                <p className="text-xs font-mono text-g40">Avance</p>
-                <p className="text-lg font-mono text-white mt-1">{project.overallProgressPercent}%</p>
-              </div>
-            </div>
-
-            {/* Phases */}
-            <div>
-              <h3 className="text-xs font-mono text-g40 uppercase tracking-wider mb-3">Fases</h3>
-              <div className="space-y-3">
-                {project.phases.map(phase => {
-                  const percent = phase.budgetUSD > 0 ? Math.round((phase.spentUSD / phase.budgetUSD) * 100) : 0
-                  const overBudget = phase.spentUSD > phase.budgetUSD
-                  return (
-                    <div key={phase.id} className="bg-g85 border border-g80 rounded-md p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-mono text-white">{phase.label}</span>
-                          <Badge variant={phase.status === 'COMPLETE' ? 'green' : phase.status === 'IN_PROGRESS' ? 'blue' : 'default'}>{phase.status.replace('_', ' ')}</Badge>
-                        </div>
-                        <span className="text-xs font-mono text-g40">{phase.progressPercent}%</span>
+          {/* Phases */}
+          <Section title="Fases y honorarios">
+            <div className="space-y-2">
+              {project.phases.map((phase) => {
+                const over = phase.spentUSD > phase.budgetUSD
+                const ps = meta(PHASE_STATUS, phase.status)
+                const spentP = phase.budgetUSD > 0 ? Math.round((phase.spentUSD / phase.budgetUSD) * 100) : 0
+                return (
+                  <div key={phase.id} className={cn('rounded-lg border p-3.5', project.currentPhase === phase.phase ? 'border-accent/40 bg-accent-muted' : 'border-g80 bg-g85')}>
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-xs font-mono text-accent w-6">{PHASE[phase.phase]?.short}</span>
+                        <span className="text-sm text-g10 truncate">{PHASE[phase.phase]?.label ?? phase.label}</span>
+                        <Badge variant={ps.variant}>{ps.label}</Badge>
                       </div>
-                      <ProgressBar
+                      <PhaseProgressInput
                         value={phase.progressPercent}
-                        variant={overBudget ? 'red' : phase.progressPercent >= 80 ? 'green' : 'blue'}
+                        disabled={saving}
+                        onCommit={(v) => mutate(() => api(`/api/projects/${project.id}/phases/${phase.phase}`, { method: 'PATCH', body: JSON.stringify({ progressPercent: v }) }))}
                       />
-                      <div className="flex justify-between mt-2 text-xs font-mono text-g40">
-                        <span>Gastado: {formatCurrency(phase.spentUSD)}</span>
-                        <span className={overBudget ? 'text-red-400' : ''}>Presupuesto: {formatCurrency(phase.budgetUSD)}</span>
+                    </div>
+                    <ProgressBar value={phase.progressPercent} marker={spentP} variant={over ? 'red' : phase.status === 'COMPLETE' ? 'green' : 'default'} />
+                    <div className="flex justify-between mt-1.5 text-2xs font-mono text-g40 tabular">
+                      <span>Consumido {formatCurrency(phase.spentUSD)} ({spentP}%)</span>
+                      <span className={over ? 'text-red-300' : ''}>Honorario {formatCurrency(phase.budgetUSD)}</span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </Section>
+
+          {/* Milestones */}
+          {project.milestones.length > 0 && (
+            <Section title="Hitos" icon={CalendarDays}>
+              <ol className="relative border-l border-g70 ml-1.5 space-y-3">
+                {project.milestones.map((m) => {
+                  const done = m.status === 'approved' || m.status === 'APPROVED'
+                  const late = !done && new Date(m.dueDate) < new Date()
+                  return (
+                    <li key={m.id} className="pl-4 relative">
+                      <span className="absolute -left-[7px] top-0.5 bg-g90">
+                        {done ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400" /> : <Circle className={cn('w-3.5 h-3.5', late ? 'text-red-400' : 'text-g50')} />}
+                      </span>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className={cn('text-sm', done ? 'text-g30' : 'text-g10')}>{m.label}</span>
+                        <span className={cn('text-2xs font-mono', late ? 'text-red-300' : 'text-g40')}>{formatDate(m.dueDate)}</span>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ol>
+            </Section>
+          )}
+
+          {/* People */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="rounded-lg border border-g80 bg-g85 p-4">
+              <p className="text-2xs font-mono text-g40 uppercase tracking-wider mb-2">Cliente</p>
+              <p className="text-sm text-white">{project.client.company}</p>
+              <p className="text-xs text-g30">{project.client.name}</p>
+              <p className="text-xs text-g40 mt-1 truncate">{project.client.email}</p>
+              <Link href={`/clients?id=${project.client.id}`} className="inline-flex items-center gap-1 mt-2 text-2xs font-mono text-accent hover:underline">
+                Portal y ficha <ArrowUpRight className="w-3 h-3" />
+              </Link>
+            </div>
+            <div className="rounded-lg border border-g80 bg-g85 p-4">
+              <p className="text-2xs font-mono text-g40 uppercase tracking-wider mb-2">Director de proyecto</p>
+              <div className="flex items-center gap-3">
+                <Avatar initials={project.projectManager.avatarInitials} />
+                <div className="min-w-0">
+                  <p className="text-sm text-white truncate">{project.projectManager.name}</p>
+                  <p className="text-xs text-g40 truncate">{project.projectManager.email}</p>
+                </div>
+              </div>
+              {project.teamMembers.length > 0 && (
+                <div className="flex -space-x-1.5 mt-3" title={project.teamMembers.map((m) => m.user.name).join(', ')}>
+                  {project.teamMembers.map((m) => (
+                    <Avatar key={m.user.id} initials={m.user.avatarInitials} size="sm" className="ring-2 ring-g85" />
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Tasks */}
+          <Section title={`Tareas abiertas (${project.tasks.length})`} icon={Users}>
+            {project.tasks.length === 0 ? (
+              <p className="text-sm text-g40">Sin tareas abiertas.</p>
+            ) : (
+              <div className="divide-y divide-g80 border border-g80 rounded-lg overflow-hidden">
+                {project.tasks.map((task) => {
+                  const ts = meta(TASK_STATUS, task.status)
+                  const late = new Date(task.dueDate) < new Date()
+                  return (
+                    <div key={task.id} className="flex items-center justify-between gap-3 px-3.5 py-2.5 bg-g85">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Avatar initials={task.assignedTo.avatarInitials} size="xs" title={task.assignedTo.name} />
+                        <span className="text-sm text-g20 truncate">{task.title}</span>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <span className={cn('text-2xs font-mono', late ? 'text-red-300' : 'text-g40')}>{formatDate(task.dueDate)}</span>
+                        <Badge variant={ts.variant}>{ts.label}</Badge>
                       </div>
                     </div>
                   )
                 })}
               </div>
-            </div>
+            )}
+          </Section>
 
-            {/* Client info */}
-            <div className="bg-g85 border border-g80 rounded-md p-4">
-              <h3 className="text-xs font-mono text-g40 uppercase tracking-wider mb-3">Cliente</h3>
-              <p className="text-white font-medium">{project.client.name}</p>
-              <p className="text-sm text-g30 mt-0.5">{project.client.company}</p>
-              <p className="text-xs text-g40 mt-1">{project.client.email}</p>
-            </div>
-
-            {/* Project Manager */}
-            <div className="bg-g85 border border-g80 rounded-md p-4">
-              <h3 className="text-xs font-mono text-g40 uppercase tracking-wider mb-3">Director de Proyecto</h3>
-              <div className="flex items-center gap-3">
-                <Avatar initials={project.projectManager?.avatarInitials ?? ''} size="md" />
-                <div>
-                  <p className="text-white font-medium">{project.projectManager.name}</p>
-                  <p className="text-xs text-g40">{project.projectManager.role}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Dates */}
-            <div className="flex gap-4 text-sm">
-              <div className="flex-1">
-                <p className="text-xs font-mono text-g40">Inicio</p>
-                <p className="text-g20 mt-0.5">{formatDate(project.startDate)}</p>
-              </div>
-              <div className="flex-1">
-                <p className="text-xs font-mono text-g40">Fin estimado</p>
-                <p className="text-g20 mt-0.5">{formatDate(project.estimatedEndDate)}</p>
-              </div>
-            </div>
-
-            {/* Team */}
-            {project.teamMembers.length > 0 && (
-              <div>
-                <h3 className="text-xs font-mono text-g40 uppercase tracking-wider mb-3">Equipo ({project.teamMembers.length})</h3>
-                <div className="space-y-2">
-                  {project.teamMembers.map((m, i) => (
-                    <div key={i} className="flex items-center justify-between py-1.5">
-                      <div className="flex items-center gap-2">
-                        <Avatar initials={m.user?.avatarInitials ?? ''} size="sm" />
-                        <span className="text-sm text-g20">{m.user.name}</span>
+          {/* Invoices */}
+          <Section
+            title="Facturación"
+            icon={Receipt}
+            action={<Link href="/finance?new=1" className="text-2xs font-mono text-accent hover:underline">+ Factura</Link>}
+          >
+            {project.invoices.length === 0 ? (
+              <p className="text-sm text-g40">Sin facturas emitidas.</p>
+            ) : (
+              <div className="divide-y divide-g80 border border-g80 rounded-lg overflow-hidden">
+                {project.invoices.map((inv) => {
+                  const s = meta(INVOICE_STATUS, inv.status)
+                  return (
+                    <Link key={inv.id} href={`/finance?invoice=${inv.id}`} className="flex items-center justify-between px-3.5 py-2.5 bg-g85 hover:bg-g80/60">
+                      <span className="text-sm font-mono text-g10">{inv.number}</span>
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm font-mono text-g20 tabular">{formatCurrency(inv.amountUSD)}</span>
+                        <Badge variant={s.variant}>{s.label}</Badge>
                       </div>
-                      <span className="text-xs font-mono text-g40">{m.role}</span>
-                    </div>
-                  ))}
-                </div>
+                    </Link>
+                  )
+                })}
               </div>
             )}
+          </Section>
 
-            {/* Tasks */}
-            {project.tasks.length > 0 && (
-              <div>
-                <h3 className="text-xs font-mono text-g40 uppercase tracking-wider mb-3">Tareas activas ({project._count.tasks})</h3>
-                <div className="space-y-2">
-                  {project.tasks.slice(0, 5).map(task => (
-                    <div key={task.id} className="flex items-center justify-between py-2 border-b border-g80/50 last:border-0">
-                      <div className="flex items-center gap-2">
-                        <Avatar initials={task.assignedTo?.avatarInitials ?? ''} size="sm" />
-                        <span className="text-sm text-g20">{task.title}</span>
-                      </div>
-                      <div className="text-right">
-                        <Badge variant={task.status === 'TODO' ? 'default' : task.status === 'IN_PROGRESS' ? 'blue' : 'green'}>{task.status}</Badge>
-                        <p className="text-xs text-g40 mt-0.5">{formatDate(task.dueDate)}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Documents */}
-            <div>
-              <h3 className="text-xs font-mono text-g40 uppercase tracking-wider mb-3 flex items-center gap-2">
-                <FileText className="w-3.5 h-3.5" />
-                Documentos
-              </h3>
-              <DocumentUpload projectId={project.id} onUploadComplete={() => {}} />
-              <div className="mt-4">
-                <DocumentList
-                  projectId={project.id}
-                  currentUserId={project.projectManager.id}
-                  currentUserRole="ARCHITECT"
-                />
-              </div>
+          {/* Documents */}
+          <Section title={`Documentos (${project._count.documents})`} icon={FileText}>
+            <DocumentUpload projectId={project.id} onUploadComplete={() => setDocsVersion((v) => v + 1)} />
+            <div className="mt-4">
+              <DocumentList
+                key={docsVersion}
+                projectId={project.id}
+                currentUserId={session?.user?.id ?? ''}
+                currentUserRole={session?.user?.role ?? ''}
+              />
             </div>
-          </div>
-        ) : (
-          <div className="p-6 text-center text-g40 text-sm">Proyecto no encontrado</div>
-        )}
-      </div>
-    </>
+          </Section>
+        </div>
+      ) : null}
+    </Drawer>
   )
 }

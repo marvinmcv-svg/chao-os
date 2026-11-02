@@ -55,7 +55,15 @@ export const CreateProjectSchema = z.object({
   actualEndDate: z.string().datetime().optional(),
 })
 
-export const UpdateProjectSchema = CreateProjectSchema.partial()
+export const UpdateProjectSchema = CreateProjectSchema.partial().extend({
+  status: ProjectStatusSchema.optional(),
+  overallProgressPercent: z.number().int().min(0).max(100).optional(),
+})
+
+export const UpdatePhaseProgressSchema = z.object({
+  progressPercent: z.number().int().min(0).max(100).optional(),
+  status: z.enum(['NOT_STARTED', 'IN_PROGRESS', 'COMPLETE']).optional(),
+})
 
 // Client
 export const CreateClientSchema = z.object({

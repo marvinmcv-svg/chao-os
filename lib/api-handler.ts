@@ -55,9 +55,20 @@ export function withApiHandler<TArgs extends unknown[], TResponse>(
         { status: options?.status ?? 200 }
       )
     } catch (error) {
+      // Let Next.js control-flow signals (dynamic-usage bailout during build,
+      // redirect(), notFound()) propagate — they are not application errors.
+      if (isNextInternalError(error)) throw error
       return errorToResponse(error)
     }
   }
+}
+
+function isNextInternalError(error: unknown): boolean {
+  const digest = (error as { digest?: unknown } | null)?.digest
+  return (
+    typeof digest === 'string' &&
+    (digest === 'DYNAMIC_SERVER_USAGE' || digest.startsWith('NEXT_REDIRECT') || digest === 'NEXT_NOT_FOUND')
+  )
 }
 
 function errorToResponse(error: unknown): NextResponse {

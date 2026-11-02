@@ -106,6 +106,23 @@ describe('checkRoute (middleware)', () => {
     })
   })
 
+  describe('Client portal (token-authenticated, no staff session)', () => {
+    it('allows /portal/projects/:id through without a staff session', () => {
+      const res = checkRoute(makeReq('/portal/projects/p1?token=abc'))
+      expect(res.status).toBe(200)
+    })
+
+    it('allows /api/portal/* through without a staff session (token checked by PortalService)', () => {
+      const res = checkRoute(makeReq('/api/portal/project/p1?token=abc'))
+      expect(res.status).toBe(200)
+    })
+
+    it('does not open look-alike paths such as /portalx or /api/portals', () => {
+      expect(checkRoute(makeReq('/portalx')).status).toBe(307)
+      expect(checkRoute(makeReq('/api/portals')).status).toBe(401)
+    })
+  })
+
   describe('Protected non-API routes', () => {
     it('redirects /dashboard to /login without session', () => {
       const res = checkRoute(makeReq('/dashboard'))

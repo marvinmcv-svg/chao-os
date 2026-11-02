@@ -1,10 +1,17 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { RefreshCw, ShieldCheck, Sparkles } from 'lucide-react'
 import { BudgetAlert } from '@/components/ai/BudgetAlert'
 import { IncomeForecast } from '@/components/ai/IncomeForecast'
 import { ChatPanel } from '@/components/ai/ChatPanel'
+import { Panel } from '@/components/ui/Card'
+import { Badge } from '@/components/ui/Badge'
+import { Button } from '@/components/ui/Button'
+import { PageHeader } from '@/components/ui/PageHeader'
+import { EmptyState, ErrorBanner, Skeleton } from '@/components/ui/EmptyState'
+import { api } from '@/lib/api-client'
 
 interface Alert {
   id: string
@@ -25,140 +32,105 @@ interface IncomeForecastData {
   projectsInvoicingThisMonth: { name: string; value: number }[]
 }
 
+type Source = 'claude' | 'rules'
+
+function SourceBadge({ source }: { source?: Source }) {
+  if (!source) return null
+  return source === 'claude' ? (
+    <Badge variant="blue"><Sparkles className="w-3 h-3" />Claude</Badge>
+  ) : (
+    <Badge variant="outline" className="normal-case">Reglas</Badge>
+  )
+}
+
 export default function AIPage() {
   const router = useRouter()
-  const [alerts, setAlerts] = useState<Alert[]>([])
+  const [alerts, setAlerts] = useState<Alert[] | null>(null)
+  const [alertsSource, setAlertsSource] = useState<Source>()
   const [forecast, setForecast] = useState<IncomeForecastData | null>(null)
-  const [loadingAlerts, setLoadingAlerts] = useState(true)
-  const [loadingForecast, setLoadingForecast] = useState(true)
+  const [forecastSource, setForecastSource] = useState<Source>()
   const [errorAlerts, setErrorAlerts] = useState<string | null>(null)
   const [errorForecast, setErrorForecast] = useState<string | null>(null)
-  const [chatOpen, setChatOpen] = useState(false)
+  const [showAll, setShowAll] = useState(false)
 
-  useEffect(() => {
-    // Fetch AI alerts
-    fetch('/api/ai/alerts')
-      .then(res => res.json())
-      .then(data => {
-        if (data.success && data.data?.alerts) {
-          setAlerts(data.data.alerts)
-        } else {
-          setErrorAlerts(data.error?.message ?? 'Error cargando alertas')
-        }
+  const load = useCallback(() => {
+    setAlerts(null)
+    setForecast(null)
+    setErrorAlerts(null)
+    setErrorForecast(null)
+    api<{ alerts: Alert[]; source: Source }>('/api/ai/alerts')
+      .then((d) => {
+        setAlerts(d.alerts ?? [])
+        setAlertsSource(d.source)
       })
-      .catch(() => setErrorAlerts('Error de conexión'))
-      .finally(() => setLoadingAlerts(false))
-
-    // Fetch income forecast
-    fetch('/api/ai/income-forecast')
-      .then(res => res.json())
-      .then(data => {
-        if (data.success && data.data?.forecast) {
-          setForecast(data.data.forecast)
-        } else {
-          setErrorForecast(data.error?.message ?? 'Error cargando forecast')
-        }
+      .catch((e) => { setErrorAlerts(e.message); setAlerts([]) })
+    api<{ forecast: IncomeForecastData; source: Source }>('/api/ai/income-forecast')
+      .then((d) => {
+        setForecast(d.forecast)
+        setForecastSource(d.source)
       })
-      .catch(() => setErrorForecast('Error de conexión'))
-      .finally(() => setLoadingForecast(false))
+      .catch((e) => setErrorForecast(e.message))
   }, [])
 
-  const handleDismissAlert = (id: string) => {
-    setAlerts(prev => prev.filter(a => a.id !== id))
-  }
+  useEffect(load, [load])
 
-  const handleNavigateToProject = (projectId: string) => {
-    router.push(`/projects/${projectId}`)
-  }
-
-  // Filter for critical + warning alerts (top 5)
-  const topAlerts = alerts
-    .filter(a => a.severity === 'critical' || a.severity === 'warning')
-    .slice(0, 5)
+  const visible = (alerts ?? []).filter((a) => showAll || a.severity !== 'info')
+  const shown = showAll ? visible : visible.slice(0, 6)
 
   return (
-    <div className="p-6 space-y-6 min-h-screen overflow-auto">
-      {/* Header */}
-      <div>
-        <h1 className="font-display text-3xl text-white">Asistente IA</h1>
-        <p className="text-g40 mt-1 text-sm font-mono">Claude-powered assistant — CHAO OS</p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Asistente IA"
+        subtitle="Alertas de riesgo, forecast de ingresos y chat con los datos en vivo del estudio"
+        actions={
+          <Button variant="secondary" onClick={load}>
+            <RefreshCw className="w-4 h-4" /> Actualizar
+          </Button>
+        }
+      />
 
-      {/* Budget Alerts Section */}
-      <section>
-        <h2 className="font-mono text-sm text-g40 uppercase tracking-wider mb-3 flex items-center gap-2">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-          </svg>
-          Alertas de Presupuesto y Capacidad
-          {loadingAlerts && (
-            <span className="text-xs text-g50 animate-pulse">cargando...</span>
-          )}
-        </h2>
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_440px] gap-4 items-start">
+        <div className="space-y-4 min-w-0">
+          <Panel
+            title="Alertas de presupuesto, cobranza y capacidad"
+            action={
+              <div className="flex items-center gap-2">
+                <SourceBadge source={alertsSource} />
+                {(alerts?.length ?? 0) > 6 && (
+                  <button onClick={() => setShowAll((s) => !s)} className="text-2xs font-mono text-g40 hover:text-white">
+                    {showAll ? 'Ver menos' : `Ver todas (${alerts!.length})`}
+                  </button>
+                )}
+              </div>
+            }
+            bodyClassName="p-4 space-y-2"
+          >
+            {errorAlerts && <ErrorBanner message={errorAlerts} onRetry={load} />}
+            {alerts === null && Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-20" />)}
+            {alerts && !errorAlerts && shown.length === 0 && (
+              <EmptyState icon={ShieldCheck} title="Sin alertas críticas" description="Presupuestos, cobranza, hitos y capacidad dentro de rango." />
+            )}
+            {shown.map((alert) => (
+              <BudgetAlert
+                key={alert.id}
+                alert={alert}
+                onDismiss={(id) => setAlerts((prev) => prev?.filter((a) => a.id !== id) ?? prev)}
+                onNavigate={(projectId) => router.push(`/projects?id=${projectId}`)}
+              />
+            ))}
+          </Panel>
 
-        {errorAlerts && (
-          <div className="bg-red-500/10 border border-red-500/30 rounded-md p-3 mb-3">
-            <p className="text-xs text-red-400">{errorAlerts}</p>
-          </div>
-        )}
-
-        {!loadingAlerts && !errorAlerts && topAlerts.length === 0 && (
-          <div className="bg-g85 border border-g80 rounded-md p-4 text-center">
-            <p className="text-sm text-g40 font-mono">Sin alertas críticas — todo bajo control ✓</p>
-          </div>
-        )}
-
-        <div className="space-y-2">
-          {topAlerts.map(alert => (
-            <BudgetAlert
-              key={alert.id}
-              alert={alert}
-              onDismiss={handleDismissAlert}
-              onNavigate={handleNavigateToProject}
-            />
-          ))}
+          <Panel title="Forecast de ingresos" action={<SourceBadge source={forecastSource} />} bodyClassName="p-4">
+            {errorForecast && <ErrorBanner message={errorForecast} onRetry={load} />}
+            {!forecast && !errorForecast && <Skeleton className="h-48" />}
+            {forecast && <IncomeForecast forecast={forecast} />}
+          </Panel>
         </div>
-      </section>
 
-      {/* Income Forecast Section */}
-      <section>
-        <h2 className="font-mono text-sm text-g40 uppercase tracking-wider mb-3 flex items-center gap-2">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-          </svg>
-          Forecast de Ingresos
-          {loadingForecast && (
-            <span className="text-xs text-g50 animate-pulse">cargando...</span>
-          )}
-        </h2>
-
-        {errorForecast && (
-          <div className="bg-red-500/10 border border-red-500/30 rounded-md p-3 mb-3">
-            <p className="text-xs text-red-400">{errorForecast}</p>
-          </div>
-        )}
-
-        {!loadingForecast && !errorForecast && forecast && (
-          <IncomeForecast forecast={forecast} />
-        )}
-
-        {loadingForecast && (
-          <div className="bg-g85 border border-g80 rounded-md p-6 text-center">
-            <p className="text-sm text-g40 font-mono animate-pulse">Generando forecast...</p>
-          </div>
-        )}
-      </section>
-
-      {/* Chat Panel Section */}
-      <section>
-        <h2 className="font-mono text-sm text-g40 uppercase tracking-wider mb-3 flex items-center gap-2">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-          </svg>
-          Chat con Asistente IA
-        </h2>
-        <ChatPanel onClose={() => setChatOpen(false)} />
-      </section>
+        <div className="xl:sticky xl:top-20">
+          <ChatPanel embedded />
+        </div>
+      </div>
     </div>
   )
 }

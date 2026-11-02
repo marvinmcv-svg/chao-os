@@ -1,7 +1,6 @@
 'use client'
 
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
-import { formatCurrency } from '@/lib/utils'
+import { formatCompact, formatCurrency } from '@/lib/utils'
 
 interface IncomeForecastProps {
   forecast: {
@@ -14,149 +13,67 @@ interface IncomeForecastProps {
   }
 }
 
-const CHART_COLORS = {
-  pipeline: '#4ade80',
-  committed: '#60a5fa',
-  expected: '#fbbf24',
-  grid: '#222222',
-  text: '#888888',
-}
-
-function CustomTooltip({ active, payload, label }: any) {
-  if (!active || !payload?.length) return null
-  return (
-    <div className="bg-g85 border border-g80 rounded-md p-3 shadow-xl">
-      <p className="text-xs font-mono text-g40 mb-2">{label}</p>
-      {payload.map((entry: any, i: number) => (
-        <div key={i} className="flex items-center gap-2 text-sm">
-          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.fill }} />
-          <span className="text-g30">{entry.name}:</span>
-          <span className="font-mono text-white">{formatCurrency(entry.value)}</span>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 export function IncomeForecast({ forecast }: IncomeForecastProps) {
-  const chartData = [
-    { name: 'Pipeline\nPonderado', value: forecast.pipelineWeighted },
-    { name: 'Revenue\nComprometido', value: forecast.committedRevenue },
-    { name: 'Esperado\nEste Trimestre', value: forecast.expectedThisQuarter },
+  const tiles = [
+    { label: 'Pipeline ponderado', value: forecast.pipelineWeighted, hint: 'Leads abiertos × probabilidad' },
+    { label: 'Honorarios comprometidos', value: forecast.committedRevenue, hint: 'Contratos de proyectos activos' },
+    { label: 'Cobro esperado trimestre', value: forecast.expectedThisQuarter, hint: 'Facturas que vencen antes del cierre' },
   ]
-
-  const maxValue = Math.max(forecast.pipelineWeighted, forecast.committedRevenue, forecast.expectedThisQuarter, 1)
-
   return (
     <div className="space-y-4">
-      {/* Stat cards */}
-      <div className="grid grid-cols-3 gap-3">
-        <div className="bg-g85 border border-g80 rounded-md p-3 text-center">
-          <p className="text-xs font-mono text-g40 uppercase tracking-wider">Pipeline Ponderado</p>
-          <p className="font-display text-xl text-green-400 mt-1">
-            {formatCurrency(forecast.pipelineWeighted)}
-          </p>
-        </div>
-        <div className="bg-g85 border border-g80 rounded-md p-3 text-center">
-          <p className="text-xs font-mono text-g40 uppercase tracking-wider">Revenue Comprometido</p>
-          <p className="font-display text-xl text-blue-400 mt-1">
-            {formatCurrency(forecast.committedRevenue)}
-          </p>
-        </div>
-        <div className="bg-g85 border border-g80 rounded-md p-3 text-center">
-          <p className="text-xs font-mono text-g40 uppercase tracking-wider">Esperado Trimestre</p>
-          <p className="font-display text-xl text-yellow-400 mt-1">
-            {formatCurrency(forecast.expectedThisQuarter)}
-          </p>
-        </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-px bg-g80 border border-g80 rounded-lg overflow-hidden">
+        {tiles.map((t) => (
+          <div key={t.label} className="bg-g85 p-4">
+            <p className="text-2xs font-mono text-g40 uppercase tracking-wider">{t.label}</p>
+            <p className="font-display text-3xl text-white mt-1 tabular">{formatCompact(t.value)}</p>
+            <p className="text-2xs text-g50 mt-1">{t.hint}</p>
+          </div>
+        ))}
       </div>
 
-      {/* Bar chart */}
-      <div className="bg-g85 border border-g80 rounded-md p-4">
-        <h4 className="font-mono text-xs text-g40 uppercase tracking-wider mb-3">Comparación de Forecast</h4>
-        <div style={{ height: 160 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart
-              data={chartData}
-              margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
-              barCategoryGap="20%"
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} vertical={false} />
-              <XAxis
-                dataKey="name"
-                tick={{ fill: CHART_COLORS.text, fontSize: 10, fontFamily: 'DM Mono' }}
-                axisLine={{ stroke: CHART_COLORS.grid }}
-              />
-              <YAxis
-                tickFormatter={v => formatCurrency(v)}
-                tick={{ fill: CHART_COLORS.text, fontSize: 10, fontFamily: 'DM Mono' }}
-                axisLine={{ stroke: CHART_COLORS.grid }}
-                width={70}
-              />
-              <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="value" name="Valor" fill={CHART_COLORS.pipeline} radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+      <blockquote className="border-l-2 border-accent/60 pl-4 py-1 text-sm text-g20 leading-relaxed">{forecast.narrative}</blockquote>
 
-      {/* Lists */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {/* Leads closing this month */}
-        <div className="bg-g85 border border-g80 rounded-md p-3">
-          <h4 className="font-mono text-xs text-g40 uppercase tracking-wider mb-2">Leads Cerrando Este Mes</h4>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <p className="text-2xs font-mono text-g40 uppercase tracking-wider mb-2">Leads por cerrar este mes</p>
           {forecast.leadsClosingThisMonth.length === 0 ? (
-            <p className="text-xs text-g40 italic">Sin leads cerrando este mes</p>
+            <p className="text-xs text-g50">Ninguno en negociación avanzada.</p>
           ) : (
-            <ul className="space-y-1.5">
-              {forecast.leadsClosingThisMonth.map((lead, i) => (
-                <li key={i} className="flex items-center justify-between">
+            <ul className="divide-y divide-g80 border border-g80 rounded-lg overflow-hidden">
+              {forecast.leadsClosingThisMonth.map((l) => (
+                <li key={l.name} className="flex items-center justify-between gap-3 px-3 py-2 bg-g85">
                   <div className="min-w-0">
-                    <p className="text-xs text-g10 truncate">{lead.name}</p>
-                    {lead.company && <p className="text-xs text-g40">{lead.company}</p>}
+                    <p className="text-sm text-g10 truncate">{l.name}</p>
+                    {l.company && <p className="text-2xs text-g40 truncate">{l.company}</p>}
                   </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    {lead.probability && (
-                      <span className="text-xs font-mono text-blue-400">{lead.probability}%</span>
-                    )}
-                    <span className="text-xs font-mono text-green-400">{formatCurrency(lead.value)}</span>
+                  <div className="text-right font-mono tabular">
+                    <p className="text-sm text-white">{formatCurrency(l.value)}</p>
+                    {l.probability != null && <p className="text-2xs text-g40">{l.probability}%</p>}
                   </div>
                 </li>
               ))}
             </ul>
           )}
         </div>
-
-        {/* Projects invoicing this month */}
-        <div className="bg-g85 border border-g80 rounded-md p-3">
-          <h4 className="font-mono text-xs text-g40 uppercase tracking-wider mb-2">Proyectos Facturando Este Mes</h4>
+        <div>
+          <p className="text-2xs font-mono text-g40 uppercase tracking-wider mb-2">Proyectos facturando este mes</p>
           {forecast.projectsInvoicingThisMonth.length === 0 ? (
-            <p className="text-xs text-g40 italic">Sin proyectos facturando este mes</p>
+            <p className="text-xs text-g50">Sin vencimientos de facturas este mes.</p>
           ) : (
-            <ul className="space-y-1.5">
-              {forecast.projectsInvoicingThisMonth.map((proj, i) => (
-                <li key={i} className="flex items-center justify-between">
+            <ul className="divide-y divide-g80 border border-g80 rounded-lg overflow-hidden">
+              {forecast.projectsInvoicingThisMonth.map((p) => (
+                <li key={p.name} className="flex items-center justify-between gap-3 px-3 py-2 bg-g85">
                   <div className="min-w-0">
-                    <p className="text-xs text-g10 truncate">{proj.name}</p>
-                    {proj.client && <p className="text-xs text-g40">{proj.client}</p>}
+                    <p className="text-sm text-g10 truncate">{p.name}</p>
+                    {p.client && <p className="text-2xs text-g40 truncate">{p.client}</p>}
                   </div>
-                  <span className="text-xs font-mono text-blue-400 flex-shrink-0">
-                    {formatCurrency(proj.value)}
-                  </span>
+                  <p className="text-sm font-mono text-white tabular">{formatCurrency(p.value)}</p>
                 </li>
               ))}
             </ul>
           )}
         </div>
       </div>
-
-      {/* Narrative */}
-      {forecast.narrative && (
-        <div className="bg-g85 border border-g80 rounded-md p-3">
-          <h4 className="font-mono text-xs text-g40 uppercase tracking-wider mb-2">Análisis del Forecast</h4>
-          <p className="text-sm text-g20 leading-relaxed">{forecast.narrative}</p>
-        </div>
-      )}
     </div>
   )
 }

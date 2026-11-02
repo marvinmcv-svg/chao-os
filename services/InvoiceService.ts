@@ -126,7 +126,7 @@ export const InvoiceService = {
         dueDate: new Date(data.dueDate),
         notes: data.notes || '',
         status: 'DRAFT',
-        lineItems: data.lineItems
+        lineItems: data.lineItems?.length
           ? {
               create: data.lineItems.map((item) => ({
                 description: item.description,
@@ -135,7 +135,21 @@ export const InvoiceService = {
                 totalUSD: item.quantity * item.unitPriceUSD,
               })),
             }
-          : undefined,
+          : data.milestoneLabel
+            ? {
+                // The schema has no milestone column — persist the billing
+                // milestone as the invoice's single line item so it is not lost
+                // (it used to be accepted by the API and silently dropped).
+                create: [
+                  {
+                    description: data.milestoneLabel,
+                    quantity: 1,
+                    unitPriceUSD: data.amountUSD,
+                    totalUSD: data.amountUSD,
+                  },
+                ],
+              }
+            : undefined,
       },
       include: {
         project: { select: { code: true, name: true } },
