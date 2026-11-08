@@ -69,6 +69,8 @@ const mockPrisma = prisma as unknown as {
     create: ReturnType<typeof vi.fn>
   }
   auditLog: { create: ReturnType<typeof vi.fn> }
+  feeProposal: { findFirst: ReturnType<typeof vi.fn> }
+  teamMember: { findMany: ReturnType<typeof vi.fn> }
   $transaction: ReturnType<typeof vi.fn>
 }
 const mockEmail = sendLeadConvertedEmail as unknown as ReturnType<typeof vi.fn>

@@ -1,16 +1,16 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, useSearchParams } from 'next/navigation'
 import { FileText, Download, CheckCircle, Clock, AlertCircle } from 'lucide-react'
 import { PHASE, PROJECT_TYPE } from '@/lib/labels'
+import { PortalChangeOrders, type PortalChangeOrder, type PortalContract } from './PortalChangeOrders'
 
 interface Phase {
   id: string
   phase: string
   label: string
   budgetUSD: number
-  spentUSD: number
   progressPercent: number
   status: string
 }
@@ -45,6 +45,8 @@ interface ProjectData {
   milestones: Milestone[]
   invoices: Invoice[]
   documents: Document[]
+  changeOrders: PortalChangeOrder[]
+  contract: PortalContract
 }
 
 function PhaseStatusBadge({ status }: { status: string }) {
@@ -83,7 +85,7 @@ export default function PortalProjectPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!token) {
       setError('Token de acceso requerido')
       setLoading(false)
@@ -99,6 +101,10 @@ export default function PortalProjectPage() {
       .catch(() => setError('Error de conexión'))
       .finally(() => setLoading(false))
   }, [projectId, token])
+
+  useEffect(() => {
+    load()
+  }, [load])
 
   if (loading) {
     return (
@@ -123,7 +129,7 @@ export default function PortalProjectPage() {
 
   if (!data) return null
 
-  const { project, phases, milestones, invoices, documents } = data
+  const { project, phases, milestones, invoices, documents, changeOrders, contract } = data
   const phaseLabels: Record<string, string> = { SD: 'EP', DD: 'DD', CD: 'DC', CA: 'AO' }
 
   return (
@@ -134,6 +140,9 @@ export default function PortalProjectPage() {
         <h1 className="font-display text-3xl text-white mt-1">{project.name}</h1>
         <p className="text-g40 mt-1">{PROJECT_TYPE[project.type] ?? project.type}</p>
       </div>
+
+      {/* Change orders awaiting the client come first: it's the one thing they must act on */}
+      <PortalChangeOrders part="pending" projectId={project.id} token={token!} changeOrders={changeOrders} contract={contract} onChanged={load} />
 
       {/* Overall progress */}
       <div className="bg-g85 border border-g80 rounded-lg p-6">
@@ -183,6 +192,8 @@ export default function PortalProjectPage() {
           ))}
         </div>
       </section>
+
+      <PortalChangeOrders part="history" projectId={project.id} token={token!} changeOrders={changeOrders} contract={contract} onChanged={load} />
 
       {/* Milestones */}
       {milestones.length > 0 && (

@@ -24,6 +24,13 @@ import {
   ForbiddenError,
 } from '@/lib/result'
 import type { Milestone, ProjectPhase } from '@prisma/client'
+import {
+  ChangeOrderService,
+  PORTAL_VISIBLE_STATUSES,
+  changeOrderPortalSelect,
+  summarize,
+  type PortalChangeOrder,
+} from './ChangeOrderService'
 
 /** Session info returned by authenticate() and used by the portal UI. */
 export type PortalAuthSession = {
@@ -79,6 +86,26 @@ export type PortalProjectData = {
     uploadedAt: Date
     phase: ProjectPhase | null
   }>
+  /** Change orders awaiting or past client decision (never drafts). */
+  changeOrders: PortalChangeOrder[]
+  contract: {
+    originalFeeUSD: number
+    approvedUSD: number
+    pendingUSD: number
+    currentFeeUSD: number
+    pendingCount: number
+  }
+}
+
+/** Resolve the client behind a portal token (Spanish messages: client-facing). */
+async function clientForToken(token?: string) {
+  if (!token) throw new UnauthorizedError('Token de acceso requerido')
+  const client = await prisma.client.findFirst({
+    where: { portalTokenHash: hashPortalToken(token), portalAccessEnabled: true },
+    select: { id: true, name: true },
+  })
+  if (!client) throw new UnauthorizedError('Enlace de acceso inválido o desactivado')
+  return client
 }
 
 export const PortalService = {
@@ -100,7 +127,7 @@ export const PortalService = {
 
     if (!token || !projectId) {
       throw new ValidationError(
-        'Token and projectId are required',
+        'Token y proyecto requeridos',
         !token ? 'token' : 'projectId'
       )
     }
@@ -117,12 +144,12 @@ export const PortalService = {
     })
 
     if (!client) {
-      throw new UnauthorizedError('Invalid token')
+      throw new UnauthorizedError('Enlace de acceso inválido o desactivado')
     }
 
     if (client.projects.length === 0) {
       // Token is valid for this client, but the projectId is not theirs.
-      throw new ForbiddenError('This project does not belong to this client')
+      throw new ForbiddenError('Este proyecto no pertenece a este cliente')
     }
 
     // Bump last login (best-effort, doesn't need to block the response).
@@ -158,21 +185,7 @@ export const PortalService = {
     projectId: string
   }): Promise<PortalProjectData> {
     const { token, projectId } = args
-
-    if (!token) {
-      throw new UnauthorizedError('Token required')
-    }
-
-    const tokenHash = hashPortalToken(token)
-
-    const client = await prisma.client.findFirst({
-      where: { portalTokenHash: tokenHash, portalAccessEnabled: true },
-      select: { id: true },
-    })
-
-    if (!client) {
-      throw new UnauthorizedError('Invalid token')
-    }
+    const client = await clientForToken(token)
 
     const project = await prisma.project.findFirst({
       where: { id: projectId, clientId: client.id },
@@ -209,12 +222,22 @@ export const PortalService = {
             phase: true,
           },
         },
+        changeOrders: {
+          where: { status: { in: [...PORTAL_VISIBLE_STATUSES] } },
+          orderBy: { sequence: 'desc' },
+          select: changeOrderPortalSelect,
+        },
       },
     })
 
     if (!project) {
-      throw new NotFoundError('Project', projectId)
+      throw new NotFoundError('Proyecto', projectId)
     }
+
+    const { pendingCount, originalFeeUSD, approvedUSD, pendingUSD, currentFeeUSD } = summarize(
+      project,
+      project.changeOrders
+    )
 
     return {
       project: {
@@ -232,6 +255,28 @@ export const PortalService = {
       milestones: project.milestones,
       invoices: project.invoices,
       documents: project.documents,
+      changeOrders: project.changeOrders,
+      contract: { originalFeeUSD, approvedUSD, pendingUSD, currentFeeUSD, pendingCount },
     }
+  },
+
+  /**
+   * Client approves or rejects a change order from the portal. Ownership is
+   * enforced through the token's client → project → change order chain.
+   *
+   * @throws UnauthorizedError  bad / disabled token
+   * @throws NotFoundError      change order not visible to this client
+   * @throws InvalidStateError  already decided
+   */
+  async decideChangeOrder(args: {
+    token: string
+    projectId: string
+    changeOrderId: string
+    decision: 'approve' | 'reject'
+    name: string
+    note: string
+  }) {
+    const client = await clientForToken(args.token)
+    return ChangeOrderService.decideFromPortal({ ...args, clientId: client.id })
   },
 }

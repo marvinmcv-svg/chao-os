@@ -135,6 +135,19 @@ enum ProposalStatus {
   SUPERSEDED
 }
 
+enum ChangeOrderKind {
+  CHANGE_ORDER // modifies contracted scope (can be a credit)
+  ADDITIONAL_SERVICE // new service outside the original contract
+}
+
+enum ChangeOrderStatus {
+  DRAFT
+  SENT // awaiting client approval (visible in the portal)
+  APPROVED
+  REJECTED
+  VOID
+}
+
 enum TimeOffType {
   VACATION
   SICK
@@ -164,6 +177,7 @@ enum NotificationType {
   OVERDUE_INVOICE
   DEADLINE_APPROACHING
   PROJECT_STATUS_CHANGE
+  CHANGE_ORDER_DECIDED
 }
 
 // ============================================================================
@@ -202,6 +216,7 @@ model User {
   reviewedTimeOff    TimeOff[]        @relation("TimeOffReviewer")
   allocations        Allocation[]
   feeProposals       FeeProposal[]    @relation("ProposalAuthor")
+  changeOrders       ChangeOrder[]    @relation("ChangeOrderAuthor")
 }
 
 model TeamMember {
@@ -275,16 +290,17 @@ model Project {
   updatedAt              DateTime      @updatedAt
 
   // Relations
-  phases      Phase[]
-  milestones  Milestone[]
-  teamMembers ProjectMember[]
-  tasks       Task[]
-  invoices    Invoice[]
-  expenses    Expense[]
-  documents   Document[]
-  comments    Comment[]
-  timeEntries TimeEntry[]
-  allocations Allocation[]
+  phases       Phase[]
+  milestones   Milestone[]
+  teamMembers  ProjectMember[]
+  tasks        Task[]
+  invoices     Invoice[]
+  expenses     Expense[]
+  documents    Document[]
+  comments     Comment[]
+  timeEntries  TimeEntry[]
+  allocations  Allocation[]
+  changeOrders ChangeOrder[]
 }
 
 model Phase {
@@ -386,6 +402,47 @@ model FeeProposal {
 }
 
 // ---------------------------------------------------------------------------
+// Change orders & additional services (client approval in the portal)
+// ---------------------------------------------------------------------------
+
+model ChangeOrder {
+  id                 String            @id @default(cuid())
+  projectId          String
+  project            Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// Per-project sequence; number is OC-<project code>-NN
+  sequence           Int
+  number             String            @unique
+  kind               ChangeOrderKind   @default(CHANGE_ORDER)
+  title              String
+  description        String            @default("")
+  reason             String            @default("")
+  /// Phase whose fee absorbs the change; null = the project's current phase
+  phase              ProjectPhase?
+  /// Fee change in USD. Negative = credit for reduced scope.
+  feeUSD             Float
+  hours              Float             @default(0)
+  /// Calendar days added to (or removed from) the estimated end date
+  scheduleImpactDays Int               @default(0)
+  status             ChangeOrderStatus @default(DRAFT)
+  sentAt             DateTime?
+  decidedAt          DateTime?
+  /// Name typed by the client when approving/rejecting, or recorded by staff
+  decidedByName      String?
+  decisionNote       String            @default("")
+  /// PORTAL (client clicked) | INTERNAL (staff recorded a signed approval)
+  decisionChannel    String?
+  invoiceId          String?           @unique
+  invoice            Invoice?          @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  createdById        String
+  createdBy          User              @relation("ChangeOrderAuthor", fields: [createdById], references: [id])
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  @@unique([projectId, sequence])
+  @@index([projectId, status])
+}
+
+// ---------------------------------------------------------------------------
 // Invoice
 // ---------------------------------------------------------------------------
 
@@ -408,8 +465,9 @@ model Invoice {
   createdAt    DateTime      @default(now())
 
   // Relations
-  lineItems InvoiceLineItem[]
-  payments  Payment[]
+  lineItems   InvoiceLineItem[]
+  payments    Payment[]
+  changeOrder ChangeOrder?
 }
 
 model InvoiceLineItem {

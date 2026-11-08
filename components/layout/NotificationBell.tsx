@@ -21,6 +21,7 @@ type NotificationType =
   | 'OVERDUE_INVOICE'
   | 'DEADLINE_APPROACHING'
   | 'PROJECT_STATUS_CHANGE'
+  | 'CHANGE_ORDER_DECIDED'
 
 interface Notification {
   id: string
@@ -50,6 +51,7 @@ function getTypeColor(type: NotificationType): string {
     case 'MILESTONE_APPROVED':
     case 'DOCUMENT_UPLOADED':
     case 'PROJECT_STATUS_CHANGE':
+    case 'CHANGE_ORDER_DECIDED':
     default:
       return 'border-l-blue-500'
   }

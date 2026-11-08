@@ -62,7 +62,7 @@ Scope: full review of the Next.js app (8 modules, 45 API routes), hands-on testi
 | Expenses & reimbursables UI | BQE, Vantagepoint | Model only | ✗ |
 | Fee proposals / estimates | Factor, Monograph | AI draft endpoint only | ✗ (no UI) |
 | Accounting sync (QuickBooks/Xero/SIN-Bolivia e-invoicing) | All | ✗ | ✗ |
-| Change orders / additional services | Factor, Vantagepoint | ✗ | ✗ |
+| Change orders / additional services | Factor, Vantagepoint | ✗ | ✅ Phase 4: client approval in the portal, contract fee/phase/end date update on approval, invoice from an approved change |
 | Resource scheduling (assign hours forward) | Mosaic, Synergy | ✗ | ✅ Phase 2: weekly allocations, drag-to-reassign planner |
 | Fee proposal → project budget | Factor, Monograph | ✗ | ✅ Phase 3: estimate by phase × role, versioned proposals, printable PDF, budget on win |
 | Task board / RFIs / submittals | Monograph, Procore-adjacent | Model only | ✗ |
@@ -80,7 +80,7 @@ Scope: full review of the Next.js app (8 modules, 45 API routes), hands-on testi
 
 1. ~~**Capacity realism:** time-off and holidays (Bolivian calendar), forward resource allocation per project/phase, drag-to-reassign on the heatmap.~~ Done in Phase 2 (§7).
 2. ~~**Fee proposals:** estimate builder by phase → proposal PDF → becomes the project budget on win (closes the BD → project loop like Factor).~~ Done in Phase 3 (§8).
-3. **Change orders & additional services** with client approval in the portal.
+3. ~~**Change orders & additional services** with client approval in the portal.~~ Done in Phase 4 (§9).
 4. **Expenses & reimbursables** UI, billable markup, receipt upload (S3 is already wired).
 5. **Bolivian e-invoicing (SIN)** and accounting export; BOB-first invoices.
 6. **Portal documents:** stored `url` is an S3 key, not a link — serve presigned GET URLs for approved documents.
@@ -118,3 +118,19 @@ Scope: full review of the Next.js app (8 modules, 45 API routes), hands-on testi
 
 **Verified:** 401 unit and integration tests (including 13 for `lib/fees` and 19 for `FeeProposalService`, plus a conversion-from-proposal test), typecheck, lint, `next build`, and a 24-step Playwright run against seeded Postgres. That run covered: create, estimate by area, live discount, save, print page with no cost leak, send → lead PROPOSAL, read-only sent version, new version, superseding, accept → WON, Escape closing only the top modal, conversion with budget/phase fees/dates matching, the architect's read-only view with 403 on writes, and mobile with no horizontal scroll. Zero console errors.
 
+
+## 9. Phase 4: change orders and additional services
+
+**Model** (`ChangeOrder`): each project numbers its own changes `OC-<project code>-NN`. A change is either a *change order* (modifies contracted scope; can be a credit) or an *additional service* (outside the contract; always a charge). It carries a title, scope description, reason, the affected phase (defaulting to the project's current phase), a fee in USD, internal hours and a schedule impact in days (negative shortens the schedule).
+
+**Lifecycle:** DRAFT → SENT → APPROVED or REJECTED. Drafts can be edited or deleted. A sent change can be withdrawn back to draft, or voided. Decided changes are immutable. PRINCIPAL, ADMIN, ARCHITECT_SENIOR and the project's own PM manage change orders. Everyone else gets a read-only view, and the API returns 403 on writes.
+
+**Client approval in the portal:** sent changes appear at the top of the client portal under "Pendiente de tu aprobación", with scope, reason, phase, fee and schedule impact. The client approves or rejects by typing their full name (recorded as the signature), with an optional comment. The token travels in the POST body, not the URL, and the endpoint is rate-limited per IP (429). Ownership is enforced through the token's client, then the project, then the change order. Drafts and voided changes are never sent to the portal, and requests for them return 404. Decided changes and a contract summary (original fee, approved changes, current fee) appear below the phases. If the client signs on paper instead, staff can record the decision ("registrada por el estudio") with the signer's name.
+
+**Effect on the contract:** approval raises (or lowers) `Project.totalBudgetUSD` and the affected phase's fee, and moves the estimated end date, all in one transaction. The decision is a conditional update on `status = SENT`, so a portal click and a staff-recorded approval can never both apply. The loser gets a 422 and nothing is written twice. A credit that would push the fee below zero is refused at send time. The PM, the author and the principals get a `CHANGE_ORDER_DECIDED` notification that deep-links to the project.
+
+**Billing:** an approved, positive change can be turned into a draft invoice in one click. It gets one line item `OC-… — title`, links back to the change order, and can only be invoiced once (a double click discards the duplicate draft). The project drawer shows original contract, approved changes and pending exposure.
+
+**Also fixed:** the portal project endpoint now goes through `PortalService`, so phase `spentUSD` (internal cost) no longer reaches the client, and portal error messages are in Spanish. Escape inside a modal opened from a drawer used to close the drawer too. Drawers and modals now share one overlay stack, so Escape closes only the topmost layer.
+
+**Verified:** 428 unit and integration tests (including 26 for `ChangeOrderService` and new portal tests for change-order visibility, field sanitisation and bad tokens), typecheck, lint, `next build`, and a 17-step Playwright run against seeded Postgres. That run covered: create, edit, send, credit plus void, minting a portal link, anonymous mobile portal with no horizontal scroll and the voided change hidden, no `spentUSD`/`hours`/author in the portal payload, bad token 401, client approval with a typed name, fee/DD-phase/end-date update, a second decision refused with 422, staff summary and notification, invoice from the change, a staff-recorded paper approval, and the architect's read-only view with 403. Zero console errors.

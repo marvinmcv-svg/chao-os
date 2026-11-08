@@ -14,6 +14,7 @@ import { CONTRACT_TYPE, INVOICE_STATUS, PHASE, PHASE_STATUS, PROJECT_STATUS, PRO
 import { cn, formatCompact, formatCurrency, formatDate } from '@/lib/utils'
 import { DocumentUpload } from './DocumentUpload'
 import { DocumentList } from './DocumentList'
+import { ChangeOrdersSection } from './ChangeOrdersSection'
 
 interface ProjectDetail {
   id: string
@@ -224,6 +225,14 @@ export function ProjectDetailPanel({ projectId, open, onClose, onUpdate }: Props
               })}
             </div>
           </Section>
+
+          <ChangeOrdersSection
+            projectId={project.id}
+            onContractChanged={() => {
+              fetchProject()
+              onUpdate()
+            }}
+          />
 
           {/* Milestones */}
           {project.milestones.length > 0 && (

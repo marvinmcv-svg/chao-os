@@ -68,6 +68,19 @@ export const PROPOSAL_STATUS: Record<string, Meta> = {
   SUPERSEDED: { label: 'Reemplazada', variant: 'outline' },
 }
 
+export const CHANGE_ORDER_STATUS: Record<string, Meta> = {
+  DRAFT: { label: 'Borrador', variant: 'default' },
+  SENT: { label: 'Esperando cliente', variant: 'yellow' },
+  APPROVED: { label: 'Aprobada', variant: 'green' },
+  REJECTED: { label: 'Rechazada', variant: 'red' },
+  VOID: { label: 'Anulada', variant: 'outline' },
+}
+
+export const CHANGE_ORDER_KIND: Record<string, string> = {
+  CHANGE_ORDER: 'Orden de cambio',
+  ADDITIONAL_SERVICE: 'Servicio adicional',
+}
+
 export const CONTRACT_TYPE: Record<string, string> = {
   FIXED_FEE: 'Honorario fijo',
   PERCENTAGE: '% de obra',

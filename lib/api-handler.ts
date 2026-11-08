@@ -124,6 +124,8 @@ function domainErrorStatus(code: string): number {
       return 403
     case 'INVALID_STATE':
       return 422
+    case 'RATE_LIMITED':
+      return 429
     case 'VALIDATION_ERROR':
     case 'INSUFFICIENT_PAYMENTS':
       return 400

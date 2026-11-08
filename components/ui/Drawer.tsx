@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useRef, type ReactNode } from 'react'
+import { type ReactNode } from 'react'
+import { useEscapeToClose } from './overlay-stack'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -16,15 +17,7 @@ interface DrawerProps {
 
 /** Right-hand slide-over used for detail views (projects, invoices, time). */
 export function Drawer({ open, onClose, eyebrow, title, actions, children, width = 'md' }: DrawerProps) {
-  const onCloseRef = useRef(onClose)
-  onCloseRef.current = onClose
-
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCloseRef.current() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [open])
+  useEscapeToClose(open, onClose)
 
   if (!open) return null
 

@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, type ReactNode } from 'react'
+import { useEscapeToClose } from './overlay-stack'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -14,27 +15,15 @@ interface ModalProps {
   size?: 'sm' | 'md' | 'lg' | 'xl'
 }
 
-// Stack of open modals so Escape closes only the topmost one (modals can nest,
-// e.g. the proposal editor opened from a lead).
-const openStack: symbol[] = []
-
 export function Modal({ open, onClose, title, description, children, className, size = 'md' }: ModalProps) {
-  const onCloseRef = useRef(onClose)
-  onCloseRef.current = onClose
+  // Escape closes only the topmost overlay (modals nest, and open over drawers)
+  useEscapeToClose(open, onClose)
 
   useEffect(() => {
     if (!open) return
-    const id = Symbol('modal')
-    openStack.push(id)
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && openStack[openStack.length - 1] === id) onCloseRef.current()
-    }
-    document.addEventListener('keydown', onKey)
     const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     return () => {
-      document.removeEventListener('keydown', onKey)
-      openStack.splice(openStack.indexOf(id), 1)
       document.body.style.overflow = prev
     }
   }, [open])

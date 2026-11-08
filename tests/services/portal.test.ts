@@ -156,6 +156,11 @@ describe('PortalService.getProjectForClient', () => {
       milestones: [],
       invoices: [],
       documents: [],
+      totalBudgetUSD: 43500,
+      changeOrders: [
+        { id: 'co1', status: 'APPROVED', feeUSD: 3500, scheduleImpactDays: 0 },
+        { id: 'co2', status: 'SENT', feeUSD: 900, scheduleImpactDays: 0 },
+      ],
     }
     mockProjectFindFirst.mockResolvedValueOnce(fakeProject)
 
@@ -188,5 +193,24 @@ describe('PortalService.getProjectForClient', () => {
     expect(result.milestones).toBe(fakeProject.milestones)
     expect(result.invoices).toBe(fakeProject.invoices)
     expect(result.documents).toBe(fakeProject.documents)
+
+    // Change orders: drafts/voided never reach the client, and the
+    // contract summary separates the original fee from approved changes.
+    const query = mockProjectFindFirst.mock.calls[0][0]
+    expect(query.include.changeOrders.where).toEqual({ status: { in: ['SENT', 'APPROVED', 'REJECTED'] } })
+    expect(query.include.changeOrders.select).not.toHaveProperty('hours')
+    expect(query.include.phases.select).not.toHaveProperty('spentUSD')
+    expect(result.contract).toEqual({ originalFeeUSD: 40000, approvedUSD: 3500, pendingUSD: 900, currentFeeUSD: 43500, pendingCount: 1 })
+    // Internal total is not exposed as a project field
+    expect(result.project).not.toHaveProperty('totalBudgetUSD')
+  })
+})
+
+describe('PortalService.decideChangeOrder', () => {
+  it('throws UnauthorizedError for a bad token before touching change orders', async () => {
+    mockClientFindFirst.mockResolvedValueOnce(null)
+    await expect(
+      PortalService.decideChangeOrder({ token: 'bad', projectId: 'p1', changeOrderId: 'co1', decision: 'approve', name: 'Ana', note: '' })
+    ).rejects.toThrow(UnauthorizedError)
   })
 })
