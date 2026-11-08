@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
+import { useSession } from 'next-auth/react'
 import { Sparkles, ArrowRight, Mail, Phone, CheckCircle2, XCircle, FolderPlus } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
@@ -9,6 +10,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Avatar } from '@/components/ui/Avatar'
 import { ErrorBanner, Skeleton } from '@/components/ui/EmptyState'
 import { GoNoGoScore } from '@/components/bd/GoNoGoScore'
+import { ProposalsSection } from '@/components/bd/ProposalsSection'
 import { api } from '@/lib/api-client'
 import { PIPELINE_STAGE, PROJECT_TYPE, SOURCE_TYPE, USER_ROLE, meta } from '@/lib/labels'
 import { cn, formatCurrency, formatDate } from '@/lib/utils'
@@ -63,6 +65,9 @@ export function LeadDetailModal({ leadId, open, onClose, onConvert, onStageChang
   const [error, setError] = useState<string | null>(null)
   const [ai, setAi] = useState<AIScoreData | null>(null)
   const [prob, setProb] = useState('')
+  const { data: session } = useSession()
+  const role = (session?.user as { role?: string } | undefined)?.role ?? ''
+  const canEditProposals = ['PRINCIPAL', 'ADMIN', 'ARCHITECT_SENIOR'].includes(role)
 
   const fetchLead = useCallback(async () => {
     if (!leadId) return
@@ -197,7 +202,7 @@ export function LeadDetailModal({ leadId, open, onClose, onConvert, onStageChang
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-lg bg-green-950/30 border border-green-900/60">
                 <div>
                   <p className="text-sm text-green-300">Lead ganado</p>
-                  <p className="text-xs text-g40 mt-0.5">Crea el proyecto con sus 4 fases y el cliente en un paso.</p>
+                  <p className="text-xs text-g40 mt-0.5">Crea el proyecto con sus 4 fases y el cliente en un paso. Si hay una propuesta aceptada, su honorario por fase y su calendario serán el presupuesto.</p>
                 </div>
                 <Button onClick={convert} loading={busy === 'convert'}>
                   <FolderPlus className="w-4 h-4" /> Convertir a proyecto
@@ -212,6 +217,16 @@ export function LeadDetailModal({ leadId, open, onClose, onConvert, onStageChang
                 <ArrowRight className="w-4 h-4 text-green-300" />
               </Link>
             )}
+
+            <ProposalsSection
+              leadId={lead.id}
+              converted={!!lead.convertedToProject}
+              canEdit={canEditProposals}
+              onLeadChanged={() => {
+                fetchLead()
+                onUpdate()
+              }}
+            />
 
             {/* AI */}
             <section className="rounded-lg border border-g80 bg-g85 p-4">

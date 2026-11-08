@@ -31,6 +31,8 @@ import type { AuthUser } from '@/lib/auth'
 import { sendLeadConvertedEmail } from '@/lib/email'
 import { heuristicLeadScore } from '@/lib/lead-heuristics'
 import { scoreLead } from '@/lib/claude'
+import { schedulePhases } from '@/lib/fees'
+import { FeeProposalService } from './FeeProposalService'
 import {
   ConflictError,
   InvalidStateError,
@@ -455,7 +457,7 @@ export const LeadService = {
    *   3. In a single transaction: create Project + 4 phases (same
    *      15/25/40/20% split as ProjectService.create), link the Lead
    *      via convertedToProjectId, write audit log.
-   *   4. Fire-and-forget email to the assigned PM.
+   *   5. Fire-and-forget email to the assigned PM.
    *
    * Throws:
    *   - NotFoundError if the lead doesn't exist
@@ -505,7 +507,44 @@ export const LeadService = {
       })
     }
 
-    // 3. Transactional write: project + phases + link + audit
+    // 3. Budget: the accepted fee proposal when there is one (phase fees,
+    //    contract type and a phase schedule), else the legacy 15/25/40/20
+    //    split of the lead's estimated value.
+    const accepted = await FeeProposalService.acceptedForLead(lead.id)
+    const startDate = new Date()
+    let totalBudgetUSD = lead.estimatedValueUSD
+    let contractType: 'FIXED_FEE' | 'PERCENTAGE' | 'TIME_AND_MATERIALS' = 'FIXED_FEE'
+    let estimatedEndDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
+    let phaseRows: {
+      phase: 'SD' | 'DD' | 'CD' | 'CA'
+      label: string
+      budgetUSD: number
+      status: 'NOT_STARTED'
+      startDate?: Date | null
+      endDate?: Date | null
+    }[] = [
+      { phase: 'SD', label: 'Schematic Design', budgetUSD: lead.estimatedValueUSD * 0.15, status: 'NOT_STARTED' },
+      { phase: 'DD', label: 'Design Development', budgetUSD: lead.estimatedValueUSD * 0.25, status: 'NOT_STARTED' },
+      { phase: 'CD', label: 'Construction Documents', budgetUSD: lead.estimatedValueUSD * 0.40, status: 'NOT_STARTED' },
+      { phase: 'CA', label: 'Construction Administration', budgetUSD: lead.estimatedValueUSD * 0.20, status: 'NOT_STARTED' },
+    ]
+    if (accepted) {
+      const schedule = schedulePhases(accepted.phases, startDate)
+      totalBudgetUSD = accepted.totals.feeUSD
+      contractType = accepted.row.contractType
+      phaseRows = accepted.totals.phases.map((p, i) => ({
+        phase: p.phase,
+        label: p.label,
+        budgetUSD: p.feeUSD,
+        status: 'NOT_STARTED' as const,
+        startDate: schedule[i].startDate,
+        endDate: schedule[i].endDate,
+      }))
+      const lastEnd = schedule.reduce<Date | null>((m, s) => (s.endDate && (!m || s.endDate > m) ? s.endDate : m), null)
+      if (lastEnd) estimatedEndDate = lastEnd
+    }
+
+    // 4. Transactional write: project + phases + link + audit
     const project = await prisma.$transaction(async (tx) => {
       const proj = await tx.project.create({
         data: {
@@ -514,20 +553,13 @@ export const LeadService = {
           clientId: client!.id,
           projectManagerId: lead.assignedToId,
           type: lead.projectType as 'RESIDENTIAL' | 'COMMERCIAL' | 'INDUSTRIAL' | 'INSTITUTIONAL' | 'MIXED',
-          contractType: 'FIXED_FEE',
+          contractType,
           currentPhase: 'SD',
-          totalBudgetUSD: lead.estimatedValueUSD,
-          startDate: new Date(),
-          estimatedEndDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+          totalBudgetUSD,
+          startDate,
+          estimatedEndDate,
           convertedFromLeadId: lead.id,
-          phases: {
-            create: [
-              { phase: 'SD', label: 'Schematic Design', budgetUSD: lead.estimatedValueUSD * 0.15, status: 'NOT_STARTED' },
-              { phase: 'DD', label: 'Design Development', budgetUSD: lead.estimatedValueUSD * 0.25, status: 'NOT_STARTED' },
-              { phase: 'CD', label: 'Construction Documents', budgetUSD: lead.estimatedValueUSD * 0.40, status: 'NOT_STARTED' },
-              { phase: 'CA', label: 'Construction Administration', budgetUSD: lead.estimatedValueUSD * 0.20, status: 'NOT_STARTED' },
-            ],
-          },
+          phases: { create: phaseRows },
         },
         include: {
           client: true,
@@ -547,14 +579,18 @@ export const LeadService = {
           action: 'CREATE',
           entityType: 'Project',
           entityId: proj.id,
-          payload: { convertedToProjectId: lead.id, leadName: lead.projectName },
+          payload: {
+            convertedToProjectId: lead.id,
+            leadName: lead.projectName,
+            ...(accepted ? { fromProposal: `${accepted.row.number} v${accepted.row.version}` } : {}),
+          },
         },
       })
 
       return proj
     })
 
-    // 4. Fire-and-forget PM email
+    // 5. Fire-and-forget PM email
     void sendLeadConvertedEmail({
       company: lead.company,
       projectName: lead.projectName,

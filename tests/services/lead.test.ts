@@ -24,6 +24,8 @@ vi.mock('@/lib/prisma', () => {
       create: vi.fn(),
     },
     auditLog: { create: vi.fn() },
+    feeProposal: { findFirst: vi.fn() },
+    teamMember: { findMany: vi.fn() },
     $transaction: vi.fn(),
   }
   return { prisma }
@@ -128,6 +130,7 @@ const VALID_CREATE_DATA = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockPrisma.feeProposal.findFirst.mockResolvedValue(null)
 })
 
 describe('LeadService.list', () => {
@@ -620,6 +623,46 @@ describe('LeadService.convertToProject', () => {
     await LeadService.convertToProject({ currentUser: makeUser(), id: 'lead_1' })
 
     expect(mockPrisma.client.create).not.toHaveBeenCalled()
+  })
+
+  it('builds the budget, contract type and phase schedule from the accepted proposal', async () => {
+    mockPrisma.lead.findUnique.mockResolvedValue(
+      makeLead({ pipelineStage: 'WON', estimatedValueUSD: 1, assignedTo: { email: 'pm@chao-os.com', name: 'Pat' } }),
+    )
+    mockPrisma.project.findFirst.mockResolvedValue(null)
+    mockPrisma.client.findFirst.mockResolvedValue({ id: 'client_existing' })
+    const line = (hours: number) => [{ role: 'ARCHITECT', description: '', hours, rateUSD: 50 }]
+    mockPrisma.feeProposal.findFirst.mockResolvedValue({
+      id: 'fp_1',
+      number: 'PRO-2026-001',
+      version: 2,
+      contractType: 'TIME_AND_MATERIALS',
+      discountPercent: 10,
+      phases: [
+        { phase: 'SD', label: 'Esquema', durationWeeks: 2, included: true, lines: line(100) },
+        { phase: 'DD', label: 'Desarrollo', durationWeeks: 3, included: true, lines: line(200) },
+        { phase: 'CD', label: 'Documentos', durationWeeks: 4, included: true, lines: line(300) },
+        { phase: 'CA', label: 'Obra', durationWeeks: 0, included: false, lines: line(999) },
+      ],
+    })
+    const create = vi.fn().mockResolvedValue({ id: 'proj_1', code: 'P-2026-001' })
+    mockPrisma.$transaction.mockImplementation(async (cb: any) =>
+      cb({ project: { create }, lead: { update: vi.fn() }, auditLog: { create: vi.fn() } }),
+    )
+
+    await LeadService.convertToProject({ currentUser: makeUser(), id: 'lead_1' })
+
+    expect(mockPrisma.feeProposal.findFirst).toHaveBeenCalledWith({ where: { leadId: 'lead_1', status: 'ACCEPTED' } })
+    const data = create.mock.calls[0][0].data
+    // 600 h × $50 = 30,000 less 10% discount
+    expect(data.totalBudgetUSD).toBe(27000)
+    expect(data.contractType).toBe('TIME_AND_MATERIALS')
+    const phases = data.phases.create
+    expect(phases.map((p: any) => p.budgetUSD)).toEqual([4500, 9000, 13500, 0])
+    expect(phases[3].startDate).toBeNull()
+    // SD 2 weeks then DD starts the next day
+    expect(phases[1].startDate.getTime() - phases[0].startDate.getTime()).toBe(14 * 86_400_000)
+    expect(data.estimatedEndDate).toEqual(phases[2].endDate)
   })
 
   it('throws InvalidStateError when lead is not WON', async () => {

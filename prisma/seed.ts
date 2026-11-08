@@ -6,6 +6,7 @@ import { PrismaClient, UserRole, ProjectType, ContractType, ProjectPhase, Projec
 import bcrypt from 'bcryptjs'
 import { generatePortalToken } from '@/lib/portal-auth'
 import { addDays, mondayOf, parseDay, todayKey } from '@/lib/calendar'
+import { buildTemplatePhases, computeProposal } from '@/lib/fees'
 
 const prisma = new PrismaClient()
 
@@ -31,6 +32,7 @@ async function main() {
     prisma.milestone.deleteMany(),
     prisma.phase.deleteMany(),
     prisma.projectMember.deleteMany(),
+    prisma.feeProposal.deleteMany(),
     prisma.lead.deleteMany(),
     prisma.project.deleteMany(),
     prisma.teamMember.deleteMany(),
@@ -1253,6 +1255,40 @@ async function main() {
   const xmasEve = `${todayKey() > `${year}-12-24` ? year + 1 : year}-12-24`
   await prisma.studioHoliday.create({ data: { date: parseDay(xmasEve), name: 'Nochebuena (cierre del estudio)' } })
   console.log(`✅ Created ${allocations.length} allocations, 2 absences and 1 studio closure`)
+
+  // =========================================================================
+  // FEE PROPOSALS: one sent (hotel), one draft (school)
+  // =========================================================================
+  const proposalSeeds = [
+    { name: 'Remodelación Hotel Los Tajibos', area: 2400, discount: 5, status: 'SENT' as const, number: 'PRO-2026-001' },
+    { name: 'Colegio Internacional SCZ', area: 3200, discount: 0, status: 'DRAFT' as const, number: 'PRO-2026-002' },
+  ]
+  for (const ps of proposalSeeds) {
+    const lead = leads.find((l) => l.projectName === ps.name)
+    if (!lead || !principal) continue
+    const phases = buildTemplatePhases({ areaM2: ps.area, projectType: lead.projectType })
+    const t = computeProposal(phases, { discountPercent: ps.discount, costRates: { PRINCIPAL: 45, ARCHITECT_SENIOR: 32, ARCHITECT: 22, BIM: 20, ADMIN: 18 } })
+    await prisma.feeProposal.create({
+      data: {
+        number: ps.number,
+        leadId: lead.id,
+        status: ps.status,
+        areaM2: ps.area,
+        discountPercent: ps.discount,
+        phases,
+        feeUSD: t.feeUSD,
+        costUSD: t.costUSD,
+        hours: t.hours,
+        scope: `Servicios profesionales de arquitectura para ${lead.projectName}: anteproyecto, desarrollo, documentación técnica para licitación y administración de obra.`,
+        exclusions: 'Estudios de suelos y topografía, ingenierías de especialidad, trámites y tasas municipales.',
+        paymentTerms: 'Anticipo del 20% a la firma. Saldo facturado al cierre de cada fase, en proporción a su honorario. Pago a 30 días.',
+        validUntil: new Date(Date.now() + 30 * 86_400_000),
+        sentAt: ps.status === 'SENT' ? new Date(Date.now() - 5 * 86_400_000) : null,
+        createdById: principal.id,
+      },
+    })
+  }
+  console.log(`✅ Created ${proposalSeeds.length} fee proposals`)
 
   // =========================================================================
   // SUMMARY

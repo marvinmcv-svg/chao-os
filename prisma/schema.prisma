@@ -127,6 +127,14 @@ enum DocumentStatus {
   REJECTED
 }
 
+enum ProposalStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  DECLINED
+  SUPERSEDED
+}
+
 enum TimeOffType {
   VACATION
   SICK
@@ -193,6 +201,7 @@ model User {
   timeOff            TimeOff[]        @relation("TimeOffOwner")
   reviewedTimeOff    TimeOff[]        @relation("TimeOffReviewer")
   allocations        Allocation[]
+  feeProposals       FeeProposal[]    @relation("ProposalAuthor")
 }
 
 model TeamMember {
@@ -337,6 +346,43 @@ model Lead {
   convertedToProject   Project?          @relation("ConvertedProject", fields: [convertedToProjectId], references: [id])
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
+
+  feeProposals FeeProposal[]
+}
+
+// ---------------------------------------------------------------------------
+// Fee proposal (estimate by phase → proposal PDF → project budget on win)
+// ---------------------------------------------------------------------------
+
+model FeeProposal {
+  id              String         @id @default(cuid())
+  number          String // PRO-YYYY-NNN, shared by all versions of a lead's proposal
+  version         Int            @default(1)
+  leadId          String
+  lead            Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  status          ProposalStatus @default(DRAFT)
+  contractType    ContractType   @default(FIXED_FEE)
+  areaM2          Float?
+  discountPercent Float          @default(0)
+  /// [{ phase, label, durationWeeks, included, lines: [{ role, description, hours, rateUSD }] }]
+  phases          Json
+  /// Denormalised totals (recomputed on every save) for lists and reports
+  feeUSD          Float          @default(0)
+  costUSD         Float          @default(0)
+  hours           Float          @default(0)
+  scope           String         @default("")
+  exclusions      String         @default("")
+  paymentTerms    String         @default("")
+  validUntil      DateTime
+  sentAt          DateTime?
+  decidedAt       DateTime?
+  createdById     String
+  createdBy       User           @relation("ProposalAuthor", fields: [createdById], references: [id])
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@unique([number, version])
+  @@index([leadId])
 }
 
 // ---------------------------------------------------------------------------

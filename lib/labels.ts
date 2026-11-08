@@ -60,6 +60,14 @@ export const PROJECT_TYPE: Record<string, string> = {
   MIXED: 'Uso mixto',
 }
 
+export const PROPOSAL_STATUS: Record<string, Meta> = {
+  DRAFT: { label: 'Borrador', variant: 'default' },
+  SENT: { label: 'Enviada', variant: 'blue' },
+  ACCEPTED: { label: 'Aceptada', variant: 'green' },
+  DECLINED: { label: 'Rechazada', variant: 'red' },
+  SUPERSEDED: { label: 'Reemplazada', variant: 'outline' },
+}
+
 export const CONTRACT_TYPE: Record<string, string> = {
   FIXED_FEE: 'Honorario fijo',
   PERCENTAGE: '% de obra',

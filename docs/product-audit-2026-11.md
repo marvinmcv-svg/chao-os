@@ -64,6 +64,7 @@ Scope: full review of the Next.js app (8 modules, 45 API routes), hands-on testi
 | Accounting sync (QuickBooks/Xero/SIN-Bolivia e-invoicing) | All | ✗ | ✗ |
 | Change orders / additional services | Factor, Vantagepoint | ✗ | ✗ |
 | Resource scheduling (assign hours forward) | Mosaic, Synergy | ✗ | ✅ Phase 2: weekly allocations, drag-to-reassign planner |
+| Fee proposal → project budget | Factor, Monograph | ✗ | ✅ Phase 3: estimate by phase × role, versioned proposals, printable PDF, budget on win |
 | Task board / RFIs / submittals | Monograph, Procore-adjacent | Model only | ✗ |
 
 ## 4. Design system changes
@@ -78,7 +79,7 @@ Scope: full review of the Next.js app (8 modules, 45 API routes), hands-on testi
 ## 5. Recommended roadmap
 
 1. ~~**Capacity realism:** time-off and holidays (Bolivian calendar), forward resource allocation per project/phase, drag-to-reassign on the heatmap.~~ Done in Phase 2 (§7).
-2. **Fee proposals:** estimate builder by phase → proposal PDF → becomes the project budget on win (closes the BD → project loop like Factor).
+2. ~~**Fee proposals:** estimate builder by phase → proposal PDF → becomes the project budget on win (closes the BD → project loop like Factor).~~ Done in Phase 3 (§8).
 3. **Change orders & additional services** with client approval in the portal.
 4. **Expenses & reimbursables** UI, billable markup, receipt upload (S3 is already wired).
 5. **Bolivian e-invoicing (SIN)** and accounting export; BOB-first invoices.
@@ -102,3 +103,18 @@ Scope: full review of the Next.js app (8 modules, 45 API routes), hands-on testi
 **Forward allocation** (`Allocation`): hours per person × project (× phase) × week. The Studio → Planificación tab shows 8 weeks per person, with load bars, holiday and absence markers, team totals, and unscheduled task demand. Allocation chips can be dragged to another person or week; dropping onto the same project merges the hours. Clicking a cell opens an editor (add with "repeat N weeks", edit, reassign, remove), which is also the keyboard and touch path. PRINCIPAL, ADMIN and ARCHITECT_SENIOR can edit; everyone else gets a read-only view. The workload heatmap's future weeks now show allocations rather than task due dates.
 
 **Verified:** 368 unit tests (including 18 calendar and 20 capacity-service tests), typecheck, lint, `next build`, and a 26-step Playwright run against seeded Postgres. That run covered drag-to-reassign, merge, repeat, drawer reassign, BIM read-only and 403s, request → approve → capacity drop and notification, studio closure, duplicate and overlap rejection, heatmap, dashboard pace, and mobile with no horizontal scroll. Zero console errors.
+
+## 8. Phase 3: fee proposals
+
+**Estimate builder** (`FeeProposal`, `lib/fees.ts`): each lead gets one proposal number (`PRO-YYYY-NNN`) with any number of versions. A version holds the four phases (SD/DD/CD/CA), each with a duration in weeks, an "included" flag and staff lines (role × hours × billing rate). Entering the built area and pressing the wand fills a starting estimate: area × design hours per m² for the project type, split 15/25/40/20 across phases and by a per-phase role mix, with durations scaled by size. Billing rates default to a rate card (principal $85/h down to admin $30/h) and are editable per line. A discount (max 50%) applies to the total and pro rata to each phase.
+
+**Internal economics:** the same hours priced at the team's average cost rate per role (from `TeamMember.hourlyRate`) give the estimated cost and margin. The margin is flagged below 20% and is only shown to PRINCIPAL, ADMIN and ARCHITECT_SENIOR. Everyone else gets client-facing figures only; the API strips cost fields for them (first step toward roadmap item 8).
+
+**Lifecycle:** DRAFT → SENT → ACCEPTED or DECLINED. Only drafts are editable. "Nueva versión" copies a sent, declined or superseded version into a new draft. Sending a version supersedes other sent versions, records the fee as the lead's estimated value and moves PROSPECT/QUALIFIED leads to PROPOSAL. Accepting one supersedes the other open versions and moves the lead to WON at 100%.
+
+**Proposal PDF:** `/proposals/:id/print` is an A4 print layout: client and project, scope, fee per phase with %, subtotal, discount and total, effort by role, a week-by-week phase timeline, payment terms, exclusions and signature blocks. "Imprimir / Guardar PDF" uses the browser print dialog (no headless Chrome needed on Vercel). Drafts carry a "no válido como oferta" banner. Cost and margin are never rendered.
+
+**Budget on win:** converting a WON lead now uses its accepted proposal. The project budget becomes the proposal fee, the contract type is carried over, and each phase budget is that phase's fee after discount. Phases are scheduled end to end from the start date, and the estimated end date is the last phase's end. Leads without an accepted proposal keep the previous 15/25/40/20 split.
+
+**Verified:** 401 unit and integration tests (including 13 for `lib/fees` and 19 for `FeeProposalService`, plus a conversion-from-proposal test), typecheck, lint, `next build`, and a 24-step Playwright run against seeded Postgres. That run covered: create, estimate by area, live discount, save, print page with no cost leak, send → lead PROPOSAL, read-only sent version, new version, superseding, accept → WON, Escape closing only the top modal, conversion with budget/phase fees/dates matching, the architect's read-only view with 403 on writes, and mobile with no horizontal scroll. Zero console errors.
+
