@@ -16,6 +16,8 @@ vi.mock('@/lib/prisma', () => {
       groupBy: vi.fn(),
       count: vi.fn(),
     },
+    timeOff: { findMany: vi.fn() },
+    studioHoliday: { findMany: vi.fn() },
   }
   return { prisma }
 })
@@ -33,7 +35,14 @@ const mockPrisma = prisma as unknown as {
     groupBy: ReturnType<typeof vi.fn>
     count: ReturnType<typeof vi.fn>
   }
+  timeOff: { findMany: ReturnType<typeof vi.fn> }
+  studioHoliday: { findMany: ReturnType<typeof vi.fn> }
 }
+
+// Wednesday 11 Nov 2026, 10:00 La Paz — a week with no Bolivian holidays.
+const NOW = new Date('2026-11-11T14:00:00Z')
+// Wednesday 4 Nov 2026 — Monday 2 Nov is Todos Santos.
+const HOLIDAY_WEEK = new Date('2026-11-04T14:00:00Z')
 
 function makeUser() {
   return {
@@ -68,6 +77,8 @@ function makeMember(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockPrisma.timeOff.findMany.mockResolvedValue([])
+  mockPrisma.studioHoliday.findMany.mockResolvedValue([])
 })
 
 describe('StudioService.getCapacity', () => {
@@ -76,15 +87,17 @@ describe('StudioService.getCapacity', () => {
     mockPrisma.timeEntry.groupBy.mockResolvedValue([])
     mockPrisma.task.groupBy.mockResolvedValue([])
 
-    const result = await StudioService.getCapacity({ currentUser: makeUser() })
+    const result = await StudioService.getCapacity({ currentUser: makeUser(), now: NOW })
 
     expect(result.members).toEqual([])
-    expect(result.summary).toEqual({
+    expect(result.summary).toMatchObject({
       avgUtilization: 0,
       overloadedCount: 0,
       totalCapacity: 0,
       totalLogged: 0,
       totalAvailable: 0,
+      peopleOut: 0,
+      holidays: [],
     })
   })
 
@@ -100,7 +113,7 @@ describe('StudioService.getCapacity', () => {
       { assignedToId: 'user_1', _count: { _all: 3 } },
     ])
 
-    const result = await StudioService.getCapacity({ currentUser: makeUser() })
+    const result = await StudioService.getCapacity({ currentUser: makeUser(), now: NOW })
 
     expect(result.members[0]).toMatchObject({
       weeklyHoursLogged: 20,
@@ -119,7 +132,7 @@ describe('StudioService.getCapacity', () => {
     ])
     mockPrisma.task.groupBy.mockResolvedValue([])
 
-    const result = await StudioService.getCapacity({ currentUser: makeUser() })
+    const result = await StudioService.getCapacity({ currentUser: makeUser(), now: NOW })
 
     expect(result.members[0].utilizationPercent).toBe(90)
     expect(result.members[0].isOverloaded).toBe(true)
@@ -146,7 +159,7 @@ describe('StudioService.getCapacity', () => {
     ])
     mockPrisma.task.groupBy.mockResolvedValue([])
 
-    const result = await StudioService.getCapacity({ currentUser: makeUser() })
+    const result = await StudioService.getCapacity({ currentUser: makeUser(), now: NOW })
 
     expect(result.members[0].userId).toBe('user_2')
     expect(result.members[1].userId).toBe('user_1')
@@ -173,14 +186,17 @@ describe('StudioService.getCapacity', () => {
     ])
     mockPrisma.task.groupBy.mockResolvedValue([])
 
-    const result = await StudioService.getCapacity({ currentUser: makeUser() })
+    const result = await StudioService.getCapacity({ currentUser: makeUser(), now: NOW })
 
-    expect(result.summary).toEqual({
+    expect(result.summary).toMatchObject({
       avgUtilization: 75,
       overloadedCount: 1,
       totalCapacity: 70,
       totalLogged: 55,
       totalAvailable: 15,
+      // Wednesday: 3 of 5 working days elapsed → 24 + 18 expected
+      totalExpectedToDate: 42,
+      pacePercent: 131,
     })
   })
 
@@ -193,11 +209,59 @@ describe('StudioService.getCapacity', () => {
     mockPrisma.timeEntry.groupBy.mockResolvedValue([])
     mockPrisma.task.groupBy.mockResolvedValue([])
 
-    await StudioService.getCapacity({ currentUser: makeUser() })
+    await StudioService.getCapacity({ currentUser: makeUser(), now: NOW })
 
     expect(mockPrisma.timeEntry.groupBy).toHaveBeenCalledTimes(1)
     expect(mockPrisma.task.groupBy).toHaveBeenCalledTimes(1)
     expect(mockPrisma.timeEntry.aggregate).not.toHaveBeenCalled()
     expect(mockPrisma.task.count).not.toHaveBeenCalled()
+  })
+
+  it('removes statutory holidays from the week\'s capacity and expected hours', async () => {
+    mockPrisma.teamMember.findMany.mockResolvedValue([makeMember({ weeklyHoursCapacity: 40 })])
+    mockPrisma.timeEntry.groupBy.mockResolvedValue([{ userId: 'user_1', _sum: { hours: 16 } }])
+    mockPrisma.task.groupBy.mockResolvedValue([])
+
+    const result = await StudioService.getCapacity({ currentUser: makeUser(), now: HOLIDAY_WEEK })
+
+    expect(result.summary.holidays.map((h) => h.name)).toEqual(['Todos Santos'])
+    expect(result.members[0]).toMatchObject({
+      weeklyHoursCapacity: 32,
+      baseWeeklyHours: 40,
+      holidayDays: 1,
+      utilizationPercent: 50,
+      // Mon is a holiday → Tue + Wed = 16 h expected → on pace
+      expectedHoursToDate: 16,
+      pacePercent: 100,
+    })
+  })
+
+  it('removes approved absences and counts the person as out', async () => {
+    mockPrisma.teamMember.findMany.mockResolvedValue([makeMember({ weeklyHoursCapacity: 40 })])
+    mockPrisma.timeEntry.groupBy.mockResolvedValue([])
+    mockPrisma.task.groupBy.mockResolvedValue([])
+    mockPrisma.timeOff.findMany.mockResolvedValue([
+      { userId: 'user_1', type: 'VACATION', startDate: new Date('2026-11-12T00:00:00Z'), endDate: new Date('2026-11-20T00:00:00Z') },
+    ])
+
+    const result = await StudioService.getCapacity({ currentUser: makeUser(), now: NOW })
+
+    expect(result.members[0]).toMatchObject({ weeklyHoursCapacity: 24, timeOffDays: 2 })
+    expect(result.summary.peopleOut).toBe(1)
+    // only APPROVED absences are loaded
+    expect(mockPrisma.timeOff.findMany.mock.calls[0][0].where.status).toBe('APPROVED')
+  })
+
+  it('reports 0% utilisation (not Infinity) for someone out all week', async () => {
+    mockPrisma.teamMember.findMany.mockResolvedValue([makeMember({ weeklyHoursCapacity: 40 })])
+    mockPrisma.timeEntry.groupBy.mockResolvedValue([])
+    mockPrisma.task.groupBy.mockResolvedValue([])
+    mockPrisma.timeOff.findMany.mockResolvedValue([
+      { userId: 'user_1', type: 'SICK', startDate: new Date('2026-11-09T00:00:00Z'), endDate: new Date('2026-11-13T00:00:00Z') },
+    ])
+
+    const result = await StudioService.getCapacity({ currentUser: makeUser(), now: NOW })
+
+    expect(result.members[0]).toMatchObject({ weeklyHoursCapacity: 0, utilizationPercent: 0, pacePercent: 0, isOverloaded: false })
   })
 })

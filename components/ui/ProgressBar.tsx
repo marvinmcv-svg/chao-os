@@ -37,7 +37,8 @@ export function ProgressBar({ value, className, showLabel = false, variant = 'de
           />
         )}
       </div>
-      {showLabel && <span className="text-2xs font-mono text-g40 w-9 text-right tabular">{Math.round(clamped)}%</span>}
+      {/* fill is clamped to the track; the label shows the real value (e.g. 140% pace) */}
+      {showLabel && <span className={cn('text-2xs font-mono w-10 text-right tabular', value > 100 ? 'text-g10' : 'text-g40')}>{Math.round(Number.isFinite(value) ? Math.max(0, value) : 0)}%</span>}
     </div>
   )
 }

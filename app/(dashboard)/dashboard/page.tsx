@@ -14,7 +14,7 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { api } from '@/lib/api-client'
 import { CHART } from '@/lib/chart-theme'
 import { INVOICE_STATUS, PHASE, PROJECT_STATUS, meta } from '@/lib/labels'
-import { cn, formatCompact, formatCurrency, weekPace, workdaysElapsedThisWeek } from '@/lib/utils'
+import { cn, formatCompact, formatCurrency } from '@/lib/utils'
 
 interface KPIData {
   activeProjects: number
@@ -33,6 +33,9 @@ interface KPIData {
   teamUtilization: number
   hoursLogged: number
   hoursCapacity: number
+  hoursExpectedToDate: number
+  teamPace: number
+  peopleOut: number
   overloadedCount: number
   trend: { month: string; billed: number; collected: number }[]
 }
@@ -148,7 +151,7 @@ export default function DashboardPage() {
               hintTone={kpis.overdueInvoices > 0 ? 'red' : 'green'}
             />
             {(() => {
-              const pace = weekPace(kpis.hoursLogged, kpis.hoursCapacity)
+              const pace = kpis.teamPace
               const tone = pace >= 110 ? 'red' : pace >= 95 ? 'yellow' : 'default'
               return (
                 <StatCard
@@ -156,7 +159,7 @@ export default function DashboardPage() {
                   icon={Gauge}
                   value={`${pace}%`}
                   tone={tone}
-                  hint={`${Math.round(kpis.hoursLogged)} h registradas · día ${workdaysElapsedThisWeek()} de 5`}
+                  hint={`${Math.round(kpis.hoursLogged)} de ${Math.round(kpis.hoursExpectedToDate)} h esperadas a hoy${kpis.peopleOut > 0 ? ` · ${kpis.peopleOut} ausente${kpis.peopleOut !== 1 ? 's' : ''}` : ''}`}
                 >
                   <ProgressBar value={pace} variant={pace >= 110 ? 'red' : pace >= 95 ? 'yellow' : 'green'} />
                 </StatCard>

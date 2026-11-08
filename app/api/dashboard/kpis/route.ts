@@ -84,6 +84,9 @@ export const GET = withApiHandler(async (_req: NextRequest) => {
     teamUtilization: capacity.summary.avgUtilization,
     hoursLogged: capacity.summary.totalLogged,
     hoursCapacity: capacity.summary.totalCapacity,
+    hoursExpectedToDate: capacity.summary.totalExpectedToDate,
+    teamPace: capacity.summary.pacePercent,
+    peopleOut: capacity.summary.peopleOut,
     overloadedCount: capacity.summary.overloadedCount,
     trend,
   }

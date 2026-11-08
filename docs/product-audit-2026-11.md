@@ -58,12 +58,12 @@ Scope: full review of the Next.js app (8 modules, 45 API routes), hands-on testi
 | Weighted pipeline + forecast | Synergy, Vantagepoint | Partial | ✅ Rules-based, Claude-enhanced |
 | Global search / ⌘K | Modern SaaS | ✗ | ✅ Projects, leads, invoices, clients, actions |
 | Mobile | All | ✗ | ✅ Responsive shell |
-| Time-off / holidays in capacity | Vantagepoint, Mosaic | ✗ | ✗ |
+| Time-off / holidays in capacity | Vantagepoint, Mosaic | ✗ | ✅ Phase 2: Bolivian calendar, studio closures, absence approvals |
 | Expenses & reimbursables UI | BQE, Vantagepoint | Model only | ✗ |
 | Fee proposals / estimates | Factor, Monograph | AI draft endpoint only | ✗ (no UI) |
 | Accounting sync (QuickBooks/Xero/SIN-Bolivia e-invoicing) | All | ✗ | ✗ |
 | Change orders / additional services | Factor, Vantagepoint | ✗ | ✗ |
-| Resource scheduling (assign hours forward) | Mosaic, Synergy | ✗ | ✗ |
+| Resource scheduling (assign hours forward) | Mosaic, Synergy | ✗ | ✅ Phase 2: weekly allocations, drag-to-reassign planner |
 | Task board / RFIs / submittals | Monograph, Procore-adjacent | Model only | ✗ |
 
 ## 4. Design system changes
@@ -77,7 +77,7 @@ Scope: full review of the Next.js app (8 modules, 45 API routes), hands-on testi
 
 ## 5. Recommended roadmap
 
-1. **Capacity realism:** time-off and holidays (Bolivian calendar), forward resource allocation per project/phase, drag-to-reassign on the heatmap.
+1. ~~**Capacity realism:** time-off and holidays (Bolivian calendar), forward resource allocation per project/phase, drag-to-reassign on the heatmap.~~ Done in Phase 2 (§7).
 2. **Fee proposals:** estimate builder by phase → proposal PDF → becomes the project budget on win (closes the BD → project loop like Factor).
 3. **Change orders & additional services** with client approval in the portal.
 4. **Expenses & reimbursables** UI, billable markup, receipt upload (S3 is already wired).
@@ -90,3 +90,15 @@ Scope: full review of the Next.js app (8 modules, 45 API routes), hands-on testi
 
 - `npm run typecheck`, `npm run lint`, `npm run test:run` (327 tests, incl. new portal middleware regression tests), `next build`.
 - Playwright end-to-end run against a seeded Postgres: login → ⌘K → project drawer → edit phase progress → fee timeline → create project (with client/PM pickers) → invoice by phase % → issue → record payment → paid → P&L/cash-flow → create lead → heuristic score (no API key) → advance → win → convert to project → log hours → generate portal link → open portal **anonymously** → bad-token rejection → settings → mobile viewport (no horizontal scroll). 16/16 passed, zero console errors.
+
+## 7. Phase 2: capacity realism
+
+**Calendar** (`lib/calendar.ts`): Bolivian national holidays, both fixed and Easter-based (Carnaval lunes/martes, Viernes Santo, Corpus Christi). A fixed holiday that falls on a Sunday is observed on Monday (DS 1210). The departmental holiday defaults to Santa Cruz (24 Sep); set `STUDIO_DEPARTMENT=LPZ|CBA` to change it. Studio closures live in `StudioHoliday`. Week maths uses UTC day keys; "today" is taken in America/La_Paz.
+
+**Absences** (`TimeOff`): full-day spans with a request → approve flow. Anyone can request their own. PRINCIPAL/ADMIN can register absences for anyone (auto-approved) and approve or reject requests. Overlapping requests are refused. Approvers and requesters are notified. Only approved absences reduce capacity.
+
+**Capacity everywhere:** `StudioService.getCapacity` now measures utilisation against *available* hours (contract hours minus holidays and approved absences). Pace compares logged hours with the hours expected up to today on working days only, so a holiday Monday no longer makes the team look behind. The same figures feed the Studio overview, dashboard KPIs, dashboard alerts and AI alerts.
+
+**Forward allocation** (`Allocation`): hours per person × project (× phase) × week. The Studio → Planificación tab shows 8 weeks per person, with load bars, holiday and absence markers, team totals, and unscheduled task demand. Allocation chips can be dragged to another person or week; dropping onto the same project merges the hours. Clicking a cell opens an editor (add with "repeat N weeks", edit, reassign, remove), which is also the keyboard and touch path. PRINCIPAL, ADMIN and ARCHITECT_SENIOR can edit; everyone else gets a read-only view. The workload heatmap's future weeks now show allocations rather than task due dates.
+
+**Verified:** 368 unit tests (including 18 calendar and 20 capacity-service tests), typecheck, lint, `next build`, and a 26-step Playwright run against seeded Postgres. That run covered drag-to-reassign, merge, repeat, drawer reassign, BIM read-only and 403s, request → approve → capacity drop and notification, studio closure, duplicate and overlap rejection, heatmap, dashboard pace, and mobile with no horizontal scroll. Zero console errors.

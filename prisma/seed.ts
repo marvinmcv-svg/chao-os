@@ -5,6 +5,7 @@
 import { PrismaClient, UserRole, ProjectType, ContractType, ProjectPhase, ProjectStatus, PhaseStatus, PipelineStage, ProjectTypeLead, SourceType, ClientType, InvoiceStatus, Currency, TaskStatus, TaskPriority, DocumentStatus, NotificationType, AIRecommendation } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 import { generatePortalToken } from '@/lib/portal-auth'
+import { addDays, mondayOf, parseDay, todayKey } from '@/lib/calendar'
 
 const prisma = new PrismaClient()
 
@@ -16,6 +17,9 @@ async function main() {
     // Clear in reverse dependency order
     prisma.notification.deleteMany(),
     prisma.auditLog.deleteMany(),
+    prisma.allocation.deleteMany(),
+    prisma.timeOff.deleteMany(),
+    prisma.studioHoliday.deleteMany(),
     prisma.comment.deleteMany(),
     prisma.document.deleteMany(),
     prisma.expense.deleteMany(),
@@ -1202,6 +1206,53 @@ async function main() {
   }
   await prisma.timeEntry.createMany({ data: entries })
   console.log(`✅ Created ${entries.length} recent time entries + re-dated tasks and invoices`)
+
+  // =========================================================================
+  // CAPACITY PLANNING: forward allocations, absences, studio closure
+  // =========================================================================
+  const thisMonday = mondayOf(todayKey())
+  const memberships = await prisma.projectMember.findMany({
+    where: { project: { status: { not: ProjectStatus.COMPLETED } } },
+    include: { project: { select: { id: true, status: true, currentPhase: true, phases: { select: { id: true, phase: true } } } } },
+  })
+  // share of weekly capacity planned per person (some over-, some under-booked)
+  const planLoad = [0.95, 0.8, 0.65, 1.1, 0.55, 0.85]
+  const allocations: { userId: string; projectId: string; phaseId: string | null; weekStart: Date; hours: number }[] = []
+  teamMembers.forEach((u, ui) => {
+    const mine = memberships.filter((m) => m.userId === u.id)
+    if (mine.length === 0) return
+    for (let w = 0; w < 8; w++) {
+      // the plan thins out further ahead, as real plans do
+      const load = planLoad[ui % planLoad.length] * (w < 3 ? 1 : 1 - (w - 2) * 0.08)
+      const active = mine.filter((m) => !(m.project.status === ProjectStatus.CLOSING && w >= 3))
+      if (active.length === 0) continue
+      const per = Math.max(2, Math.round(((40 * load) / active.length) / 2) * 2)
+      for (const m of active) {
+        const phase = m.project.phases.find((ph) => ph.phase === m.project.currentPhase)
+        allocations.push({ userId: u.id, projectId: m.project.id, phaseId: phase?.id ?? null, weekStart: parseDay(addDays(thisMonday, w * 7)), hours: per })
+      }
+    }
+  })
+  await prisma.allocation.createMany({ data: allocations })
+
+  const principal = await prisma.user.findFirst({ where: { role: UserRole.PRINCIPAL } })
+  await prisma.timeOff.create({
+    data: {
+      userId: sofiaUser.id, type: 'VACATION', status: 'APPROVED', note: 'Vacaciones de fin de año',
+      startDate: parseDay(addDays(thisMonday, 14)), endDate: parseDay(addDays(thisMonday, 18)),
+      reviewedById: principal?.id, reviewedAt: new Date(),
+    },
+  })
+  await prisma.timeOff.create({
+    data: {
+      userId: diegoUser.id, type: 'TRAINING', status: 'PENDING', note: 'Curso de Revit MEP',
+      startDate: parseDay(addDays(thisMonday, 31)), endDate: parseDay(addDays(thisMonday, 32)),
+    },
+  })
+  const year = Number(todayKey().slice(0, 4))
+  const xmasEve = `${todayKey() > `${year}-12-24` ? year + 1 : year}-12-24`
+  await prisma.studioHoliday.create({ data: { date: parseDay(xmasEve), name: 'Nochebuena (cierre del estudio)' } })
+  console.log(`✅ Created ${allocations.length} allocations, 2 absences and 1 studio closure`)
 
   // =========================================================================
   // SUMMARY

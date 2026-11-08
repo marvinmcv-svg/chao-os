@@ -11,12 +11,15 @@
  *   2. task.groupBy(assignedToId) for open tasks — 1 query
  * → constant 3 queries regardless of team size.
  *
- * Output shape is identical to the original route so the frontend
- * contract doesn't change: members sorted by utilization desc + a
- * summary block (avg utilization, overloaded count, capacity totals).
+ * Capacity realism: `weeklyHoursCapacity` is the *available* hours this
+ * week (contract hours minus Bolivian/studio holidays and approved
+ * absences), and pace compares logged hours with the hours expected up
+ * to today on working days only.
  */
 import { prisma } from '@/lib/prisma'
 import type { AuthUser } from '@/lib/auth'
+import { addDays, expectedHoursToDate, mondayOf, parseDay, todayKey, weekAvailability } from '@/lib/calendar'
+import { loadCalendar } from './CapacityService'
 
 export const StudioService = {
   // ─── getCapacity ─────────────────────────────────────────────────────
@@ -36,13 +39,11 @@ export const StudioService = {
    *  - Members without any time entries or tasks fall out of the
    *    groupBy results naturally → 0 hours / 0 tasks.
    */
-  async getCapacity(args: { currentUser: AuthUser }) {
-    const now = new Date()
-    const dayOfWeek = now.getDay()
-    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1
-    const monday = new Date(now)
-    monday.setDate(now.getDate() - daysToMonday)
-    monday.setHours(0, 0, 0, 0)
+  async getCapacity(args: { currentUser: AuthUser; now?: Date }) {
+    const today = todayKey(args.now)
+    const mondayKey = mondayOf(today)
+    const monday = parseDay(mondayKey)
+    const nextMonday = parseDay(addDays(mondayKey, 7))
 
     const members = await prisma.teamMember.findMany({
       include: {
@@ -61,7 +62,7 @@ export const StudioService = {
     // BATCH 1: hours logged per user this week (single query)
     const weekAgg = await prisma.timeEntry.groupBy({
       by: ['userId'],
-      where: { date: { gte: monday } },
+      where: { date: { gte: monday, lt: nextMonday } },
       _sum: { hours: true },
     })
     const hoursByUser = new Map(weekAgg.map((r) => [r.userId, r._sum.hours ?? 0]))
@@ -74,11 +75,18 @@ export const StudioService = {
     })
     const tasksByUser = new Map(taskAgg.map((r) => [r.assignedToId, r._count._all]))
 
+    // BATCH 3+4: holidays/closures and approved absences this week
+    const cal = await loadCalendar(mondayKey, addDays(mondayKey, 6))
+
     const capacityData = members.map((member) => {
       const loggedHours = hoursByUser.get(member.userId) ?? 0
+      const absences = cal.absencesByUser.get(member.userId) ?? []
+      const av = weekAvailability(mondayKey, member.weeklyHoursCapacity, cal.holidayKeys, absences)
+      const expected = expectedHoursToDate(mondayKey, today, member.weeklyHoursCapacity, cal.holidayKeys, absences)
+      // Utilisation is measured against this week's *available* hours.
       const utilizationPercent =
-        member.weeklyHoursCapacity > 0
-          ? Math.round((loggedHours / member.weeklyHoursCapacity) * 100)
+        av.capacityHours > 0
+          ? Math.round((loggedHours / av.capacityHours) * 100)
           : 0
 
       return {
@@ -87,7 +95,13 @@ export const StudioService = {
         name: member.user.name,
         avatarInitials: member.user.avatarInitials,
         role: member.role,
-        weeklyHoursCapacity: member.weeklyHoursCapacity,
+        /** Available hours this week (contract hours minus holidays and absences). */
+        weeklyHoursCapacity: av.capacityHours,
+        baseWeeklyHours: member.weeklyHoursCapacity,
+        holidayDays: av.holidayDays,
+        timeOffDays: av.timeOffDays,
+        expectedHoursToDate: expected,
+        pacePercent: expected > 0 ? Math.round((loggedHours / expected) * 100) : 0,
         weeklyHoursLogged: loggedHours,
         utilizationPercent,
         activeTasks: tasksByUser.get(member.userId) ?? 0,
@@ -109,6 +123,7 @@ export const StudioService = {
     const overloadedCount = capacityData.filter((m) => m.isOverloaded).length
     const totalCapacity = capacityData.reduce((sum, m) => sum + m.weeklyHoursCapacity, 0)
     const totalLogged = capacityData.reduce((sum, m) => sum + m.weeklyHoursLogged, 0)
+    const totalExpected = capacityData.reduce((sum, m) => sum + m.expectedHoursToDate, 0)
 
     return {
       members: capacityData,
@@ -118,6 +133,10 @@ export const StudioService = {
         totalCapacity,
         totalLogged,
         totalAvailable: totalCapacity - totalLogged,
+        totalExpectedToDate: Math.round(totalExpected * 10) / 10,
+        pacePercent: totalExpected > 0 ? Math.round((totalLogged / totalExpected) * 100) : 0,
+        holidays: cal.holidays,
+        peopleOut: capacityData.filter((m) => m.timeOffDays > 0).length,
       },
     }
   },

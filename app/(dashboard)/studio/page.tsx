@@ -14,8 +14,18 @@ import { EmptyState, ErrorBanner, Skeleton } from '@/components/ui/EmptyState'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table'
 import { TimeTrackingWidget } from '@/components/studio/TimeTrackingWidget'
 import { WorkloadHeatmap } from '@/components/studio/WorkloadHeatmap'
+import { ResourcePlanner } from '@/components/studio/ResourcePlanner'
+import { AbsencesPanel } from '@/components/studio/AbsencesPanel'
+import { Segmented } from '@/components/ui/Tabs'
 import { api } from '@/lib/api-client'
-import { cn, formatDate, weekPace, workdaysElapsedThisWeek } from '@/lib/utils'
+import { cn, formatDate } from '@/lib/utils'
+
+type Tab = 'overview' | 'plan' | 'absences'
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'overview', label: 'Resumen' },
+  { id: 'plan', label: 'Planificación' },
+  { id: 'absences', label: 'Ausencias' },
+]
 
 interface TeamMember {
   id: string
@@ -24,6 +34,11 @@ interface TeamMember {
   avatarInitials: string
   role: string
   weeklyHoursCapacity: number
+  baseWeeklyHours: number
+  holidayDays: number
+  timeOffDays: number
+  expectedHoursToDate: number
+  pacePercent: number
   weeklyHoursLogged: number
   utilizationPercent: number
   activeTasks: number
@@ -36,6 +51,10 @@ interface CapacitySummary {
   totalCapacity: number
   totalLogged: number
   totalAvailable: number
+  totalExpectedToDate: number
+  pacePercent: number
+  peopleOut: number
+  holidays: { date: string; name: string }[]
 }
 
 interface Entry {
@@ -60,6 +79,9 @@ function StudioInner() {
   const [error, setError] = useState<string | null>(null)
   const [showLog, setShowLog] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
+  const tabParam = params.get('tab') as Tab | null
+  const tab: Tab = tabParam && TABS.some((t) => t.id === tabParam) ? tabParam : 'overview'
+  const setTab = (t: Tab) => router.replace(t === 'overview' ? '/studio' : `/studio?tab=${t}`, { scroll: false })
 
   useEffect(() => {
     if (params.get('log')) setShowLog(true)
@@ -96,6 +118,17 @@ function StudioInner() {
         }
       />
 
+      <Segmented options={TABS} value={tab} onChange={setTab} />
+
+      {tab === 'plan' && (
+        <Panel title="Planificación de recursos · 8 semanas">
+          <ResourcePlanner refreshKey={refreshKey} onChanged={() => { load(); setRefreshKey((k) => k + 1) }} />
+        </Panel>
+      )}
+
+      {tab === 'absences' && <AbsencesPanel onChanged={() => { load(); setRefreshKey((k) => k + 1) }} />}
+
+      {tab === 'overview' && <>
       {error && <ErrorBanner message={error} onRetry={load} />}
 
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
@@ -103,16 +136,25 @@ function StudioInner() {
           Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[120px] rounded-lg" />)
         ) : (
           <>
-            <StatCard label="Equipo" icon={Users} value={members.length} hint={`${summary.totalCapacity} h de capacidad semanal`} />
+            <StatCard
+              label="Equipo"
+              icon={Users}
+              value={members.length}
+              hint={
+                summary.peopleOut > 0 || summary.holidays.length > 0
+                  ? [summary.peopleOut > 0 && `${summary.peopleOut} ausente${summary.peopleOut !== 1 ? 's' : ''}`, summary.holidays.length > 0 && summary.holidays.map((h) => h.name).join(', ')].filter(Boolean).join(' · ')
+                  : `${summary.totalCapacity} h disponibles esta semana`
+              }
+            />
             {(() => {
-              const pace = weekPace(summary.totalLogged, summary.totalCapacity)
+              const pace = summary.pacePercent
               return (
-                <StatCard label="Ritmo de la semana" icon={Gauge} value={`${pace}%`} tone={pace >= 110 ? 'red' : pace >= 95 ? 'yellow' : 'default'} hint={`${summary.avgUtilization}% de la semana completa · día ${workdaysElapsedThisWeek()} de 5`}>
+                <StatCard label="Ritmo de la semana" icon={Gauge} value={`${pace}%`} tone={pace >= 110 ? 'red' : pace >= 95 ? 'yellow' : 'default'} hint={`${Math.round(summary.totalLogged)} de ${Math.round(summary.totalExpectedToDate)} h esperadas a hoy`}>
                   <ProgressBar value={pace} variant={utilTone(pace)} />
                 </StatCard>
               )
             })()}
-            <StatCard label="Horas esta semana" icon={Clock} value={<>{Math.round(summary.totalLogged)}<span className="text-xl text-g40"> / {summary.totalCapacity}</span></>} hint={`${Math.max(0, Math.round(summary.totalAvailable))} h disponibles`} />
+            <StatCard label="Horas esta semana" icon={Clock} value={<>{Math.round(summary.totalLogged)}<span className="text-xl text-g40"> / {Math.round(summary.totalCapacity)}</span></>} hint={`${Math.max(0, Math.round(summary.totalAvailable))} h por cubrir · sin feriados ni ausencias`} />
             <StatCard
               label="Sobrecargados"
               icon={AlertTriangle}
@@ -124,7 +166,11 @@ function StudioInner() {
         )}
       </div>
 
-      <Panel title="Carga de trabajo · 6 semanas atrás + 4 adelante" bodyClassName="p-4">
+      <Panel
+        title="Carga de trabajo · 6 semanas atrás + 4 adelante"
+        bodyClassName="p-4"
+        action={<Button size="sm" variant="ghost" onClick={() => setTab('plan')}>Planificar →</Button>}
+      >
         <WorkloadHeatmap refreshKey={refreshKey} />
       </Panel>
 
@@ -147,7 +193,7 @@ function StudioInner() {
               </TableHeader>
               <TableBody>
                 {members.map((m) => {
-                  const pace = weekPace(m.weeklyHoursLogged, m.weeklyHoursCapacity)
+                  const pace = m.pacePercent
                   const tone = utilTone(pace)
                   return (
                     <TableRow key={m.id}>
@@ -156,20 +202,27 @@ function StudioInner() {
                           <Avatar initials={m.avatarInitials} />
                           <div className="min-w-0">
                             <p className="text-sm text-white truncate">{m.name}</p>
-                            <p className="text-xs text-g40 truncate">{m.role}</p>
+                            <p className="text-xs text-g40 truncate">
+                              {m.role}
+                              {m.timeOffDays > 0 && <span className="text-g20"> · {m.timeOffDays} d ausente</span>}
+                            </p>
                           </div>
                         </div>
                       </TableCell>
                       <TableCell className="text-center font-mono tabular">{m.activeTasks}</TableCell>
                       <TableCell className="text-right font-mono tabular">
                         <span className="text-white">{m.weeklyHoursLogged}</span>
-                        <span className="text-g40"> / {m.weeklyHoursCapacity}h</span>
+                        <span className="text-g40" title={m.weeklyHoursCapacity < m.baseWeeklyHours ? `${m.baseWeeklyHours} h de contrato menos feriados/ausencias` : undefined}> / {m.weeklyHoursCapacity}h</span>
                       </TableCell>
                       <TableCell><ProgressBar value={pace} variant={tone} showLabel /></TableCell>
                       <TableCell className="text-right">
-                        <Badge variant={tone === 'blue' ? 'default' : tone} dot>
-                          {pace >= 110 ? 'Excedido' : pace >= 95 ? 'Al límite' : pace >= 60 ? 'Óptimo' : 'Disponible'}
-                        </Badge>
+                        {m.weeklyHoursCapacity === 0 ? (
+                          <Badge variant="default">Ausente</Badge>
+                        ) : (
+                          <Badge variant={tone === 'blue' ? 'default' : tone} dot>
+                            {pace >= 110 ? 'Excedido' : pace >= 95 ? 'Al límite' : pace >= 60 ? 'Óptimo' : 'Disponible'}
+                          </Badge>
+                        )}
                       </TableCell>
                     </TableRow>
                   )
@@ -200,6 +253,8 @@ function StudioInner() {
           )}
         </Panel>
       </div>
+
+      </>}
 
       {showLog && (
         <TimeTrackingWidget
