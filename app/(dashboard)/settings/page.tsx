@@ -13,6 +13,7 @@ import { ErrorBanner, Skeleton } from '@/components/ui/EmptyState'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table'
 import { api } from '@/lib/api-client'
 import { USER_ROLE } from '@/lib/labels'
+import { FiscalSettingsPanel } from '@/components/finance/FiscalSettingsPanel'
 
 interface Member {
   id: string
@@ -26,6 +27,7 @@ interface Status {
   ai: boolean
   email: boolean
   storage: boolean
+  siat: boolean
   portalUrl: string | null
   defaultHourlyRate: number
   timezone: string
@@ -183,6 +185,8 @@ export default function SettingsPage() {
         </Panel>
       </div>
 
+      <FiscalSettingsPanel />
+
       <Panel title="Equipo y capacidad" action={<Users className="w-4 h-4 text-g50" />}>
         {!team ? (
           <div className="p-5 space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12" />)}</div>
@@ -217,7 +221,8 @@ export default function SettingsPage() {
           <div className="divide-y divide-g80">
             <Integration ok={status.ai} name="Claude (Anthropic)" env="ANTHROPIC_API_KEY" desc="Chat con datos del estudio, scoring Go/No-Go y redacción de alertas. Sin clave, alertas y scoring usan reglas determinísticas." />
             <Integration ok={status.email} name="Email (Resend)" env="RESEND_API_KEY" desc="Envío de facturas, avisos de pago y actualizaciones de fase al cliente." />
-            <Integration ok={status.storage} name="Almacenamiento (S3 / R2)" env="AWS_ACCESS_KEY_ID · AWS_SECRET_ACCESS_KEY · DOCUMENTS_S3_BUCKET" desc="Carga y descarga de planos y documentos de proyecto." />
+            <Integration ok={status.storage} name="Almacenamiento (S3 / R2)" env="AWS_ACCESS_KEY_ID · AWS_SECRET_ACCESS_KEY · DOCUMENTS_S3_BUCKET" desc="Carga y descarga de planos, documentos de proyecto y comprobantes de gastos." />
+            <Integration ok={status.siat} name="SIN — SIAT (facturación en línea)" env="SIAT_TOKEN · SIAT_CUIS · SIAT_SYSTEM_CODE" desc="Validación de facturas ante el SIN. Requiere token delegado, CUIS/CUFD y firma digital; la transmisión aún no está implementada, así que las facturas se emiten fuera de línea." />
           </div>
         )}
       </Panel>

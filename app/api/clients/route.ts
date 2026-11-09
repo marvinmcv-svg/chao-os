@@ -20,6 +20,10 @@ export const GET = withApiHandler(async (_req: NextRequest) => {
       portalAccessEnabled: true,
       portalLastLogin: true,
       createdAt: true,
+      billingName: true,
+      docType: true,
+      docNumber: true,
+      docComplement: true,
       projects: {
         select: { id: true, code: true, name: true, status: true, overallProgressPercent: true, totalBudgetUSD: true },
         orderBy: { code: 'desc' },

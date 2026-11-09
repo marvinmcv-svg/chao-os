@@ -14,6 +14,7 @@ import { InvoiceDetailPanel } from '@/components/finance/InvoiceDetailPanel'
 import { NewInvoiceModal } from '@/components/modals/NewInvoiceModal'
 import { FinanceCharts, type CashFlowData, type PnLRow } from '@/components/finance/FinanceCharts'
 import { ExpensesQueue } from '@/components/expenses/ExpensesQueue'
+import { FiscalPanel } from '@/components/finance/FiscalPanel'
 import { api } from '@/lib/api-client'
 import { INVOICE_STATUS, meta } from '@/lib/labels'
 import { cn, formatCompact, formatCurrency, formatDate } from '@/lib/utils'
@@ -23,6 +24,10 @@ interface Invoice {
   number: string
   amountUSD: number
   currency: string
+  exchangeRate: number
+  amountBOB: number | null
+  fiscalNumber: number | null
+  fiscalStatus: string
   status: string
   issuedAt: string
   dueDate: string
@@ -56,7 +61,7 @@ function FinanceInner() {
     if (id) setSelectedId(id)
     if (params.get('new')) setShowNew(true)
     const tab = params.get('tab')
-    if (tab === 'expenses' || tab === 'analytics') setView(tab)
+    if (tab === 'expenses' || tab === 'analytics' || tab === 'fiscal') setView(tab)
   }, [params])
 
   // Previously this page rendered hard-coded mock invoices from a different
@@ -146,6 +151,7 @@ function FinanceInner() {
         tabs={[
           { id: 'invoices', label: 'Facturas', count: invoices?.length },
           { id: 'expenses', label: 'Gastos y reembolsos' },
+          { id: 'fiscal', label: 'Impuestos y contabilidad' },
           { id: 'analytics', label: 'Rentabilidad y flujo de caja' },
         ]}
         activeTab={view}
@@ -211,7 +217,14 @@ function FinanceInner() {
                     return (
                       <TableRow key={inv.id} onClick={() => setSelectedId(inv.id)}>
                         <TableCell>
-                          <p className="font-mono text-g10">{inv.number}</p>
+                          <p className="font-mono text-g10">
+                            {inv.number}
+                            {inv.fiscalNumber != null && (
+                              <span className={cn('ml-2 text-2xs px-1.5 py-0.5 rounded border', inv.fiscalStatus === 'ANNULLED' ? 'border-red-800 text-red-300 line-through' : 'border-g70 text-g30')} title="N° de factura fiscal (SIN)">
+                                F-{inv.fiscalNumber}
+                              </span>
+                            )}
+                          </p>
                           <p className="text-xs text-g40 truncate max-w-[220px]">{inv.lineItems?.[0]?.description ?? ''}</p>
                         </TableCell>
                         <TableCell>
@@ -223,7 +236,16 @@ function FinanceInner() {
                           <p className={cn('text-xs font-mono', overdue ? 'text-red-300' : 'text-g30')}>{formatDate(inv.dueDate)}</p>
                           {overdue && <p className="text-2xs font-mono text-red-400">{days} días de mora</p>}
                         </TableCell>
-                        <TableCell className="text-right font-mono tabular text-white">{formatCurrency(inv.amountUSD)}</TableCell>
+                        <TableCell className="text-right font-mono tabular text-white">
+                          {inv.amountBOB != null || inv.currency === 'BOB' ? (
+                            <>
+                              {`Bs ${(inv.amountBOB ?? inv.amountUSD * inv.exchangeRate).toLocaleString('es-BO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                              <span className="block text-2xs text-g50">{formatCurrency(inv.amountUSD)}</span>
+                            </>
+                          ) : (
+                            formatCurrency(inv.amountUSD)
+                          )}
+                        </TableCell>
                         <TableCell className="text-right hidden md:table-cell font-mono tabular text-g30">
                           {balance > 0 ? formatCurrency(balance) : <CheckCircle2 className="w-4 h-4 text-green-400 inline" />}
                         </TableCell>
@@ -239,6 +261,8 @@ function FinanceInner() {
       )}
 
       {view === 'expenses' && <ExpensesQueue />}
+
+      {view === 'fiscal' && <FiscalPanel onOpenInvoice={setSelectedId} />}
 
       {view === 'analytics' && (pnl === null ? <Skeleton className="h-96 rounded-lg" /> : <FinanceCharts pnlData={pnl} cashFlowData={cashflow} />)}
 

@@ -18,6 +18,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { api } from '@/lib/api-client'
 import { PROJECT_STATUS, meta } from '@/lib/labels'
 import { formatCompact, formatDate, getRelativeTime } from '@/lib/utils'
+import { ClientFiscalCard } from '@/components/finance/ClientFiscalCard'
 
 interface Client {
   id: string
@@ -31,6 +32,10 @@ interface Client {
   portalLastLogin: string | null
   createdAt: string
   projects: { id: string; code: string; name: string; status: string; overallProgressPercent: number; totalBudgetUSD: number }[]
+  billingName: string
+  docType: 'CI' | 'CEX' | 'PAS' | 'OD' | 'NIT'
+  docNumber: string
+  docComplement: string
   billedUSD: number
   paidUSD: number
   outstandingUSD: number
@@ -257,6 +262,8 @@ function ClientsInner() {
               {selected.phone && <a href={`tel:${selected.phone}`} className="flex items-center gap-2 text-xs text-g30 hover:text-white"><Phone className="w-3.5 h-3.5" />{selected.phone}</a>}
               {selected.notes && <p className="text-xs text-g40 pt-2 border-t border-g80 whitespace-pre-wrap">{selected.notes}</p>}
             </div>
+
+            <ClientFiscalCard client={selected} onSaved={load} />
 
             <div className="grid grid-cols-3 gap-px bg-g80 border border-g80 rounded-lg overflow-hidden">
               {[

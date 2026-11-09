@@ -40,8 +40,8 @@ export function NewInvoiceModal({ open, onClose, onSuccess }: Props) {
     phase: '',
     percent: '',
     milestoneLabel: '',
-    amountUSD: '',
-    currency: 'USD',
+    amount: '',
+    currency: 'BOB',
     exchangeRate: '6.96',
     dueDate: inDays(30),
     notes: '',
@@ -50,6 +50,10 @@ export function NewInvoiceModal({ open, onClose, onSuccess }: Props) {
   useEffect(() => {
     if (!open) return
     setError(null)
+    // BOB-first: default rate from the studio's fiscal settings
+    api<{ settings: { exchangeRate: number } }>('/api/settings/fiscal')
+      .then((d) => setForm((f) => ({ ...f, exchangeRate: String(d.settings.exchangeRate) })))
+      .catch(() => {})
     api<unknown>('/api/projects?limit=200')
       .then((d) => setProjects(asList<Project>(d, 'projects').filter((p) => p.status !== 'COMPLETED')))
       .catch((e) => setError(e.message))
@@ -66,15 +70,18 @@ export function NewInvoiceModal({ open, onClose, onSuccess }: Props) {
     return Math.round(phase.budgetUSD * (pct / 100) * 100) / 100
   }, [mode, phase, form.percent])
 
+  const rate = parseFloat(form.exchangeRate) || 6.96
+  const isBOB = form.currency === 'BOB'
+
   useEffect(() => {
     if (computed != null && phase) {
       setForm((f) => ({
         ...f,
-        amountUSD: String(computed),
+        amount: String(f.currency === 'BOB' ? Math.round(computed * (parseFloat(f.exchangeRate) || 6.96) * 100) / 100 : computed),
         milestoneLabel: `${PHASE[phase.phase]?.label ?? phase.phase} — ${f.percent}% del honorario de fase`,
       }))
     }
-  }, [computed, phase])
+  }, [computed, phase, form.currency, form.exchangeRate])
 
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }))
@@ -82,7 +89,9 @@ export function NewInvoiceModal({ open, onClose, onSuccess }: Props) {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
-    const amount = parseFloat(form.amountUSD)
+    const entered = parseFloat(form.amount)
+    // Phase billing keeps the exact USD fee; free amounts in Bs convert at the rate.
+    const amount = computed != null && mode === 'phase' ? computed : isBOB ? Math.round((entered / rate) * 100) / 100 : entered
     if (!form.projectId) return setError('Selecciona un proyecto')
     if (!(amount > 0)) return setError('El monto debe ser positivo')
     if (!form.milestoneLabel.trim()) return setError('Describe el hito o concepto')
@@ -95,12 +104,12 @@ export function NewInvoiceModal({ open, onClose, onSuccess }: Props) {
           milestoneLabel: form.milestoneLabel.trim(),
           amountUSD: amount,
           currency: form.currency,
-          exchangeRate: form.currency === 'BOB' ? parseFloat(form.exchangeRate) || 6.96 : 1,
+          exchangeRate: isBOB ? rate : 1,
           dueDate: new Date(form.dueDate + 'T12:00:00').toISOString(),
           notes: form.notes || undefined,
         }),
       })
-      setForm((f) => ({ ...f, phase: '', percent: '', milestoneLabel: '', amountUSD: '', notes: '' }))
+      setForm((f) => ({ ...f, phase: '', percent: '', milestoneLabel: '', amount: '', notes: '' }))
       onSuccess(inv)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al crear factura')
@@ -155,8 +164,8 @@ export function NewInvoiceModal({ open, onClose, onSuccess }: Props) {
         <Input label="Hito / concepto" value={form.milestoneLabel} onChange={set('milestoneLabel')} placeholder="Hito 2 — Desarrollo de diseño 50%" />
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <Input label="Monto (USD)" type="number" step="0.01" min="0.01" value={form.amountUSD} onChange={set('amountUSD')} placeholder="18500" readOnly={mode === 'phase' && computed != null} />
-          <Select label="Moneda de cobro" value={form.currency} onChange={set('currency')} options={[{ value: 'USD', label: 'USD' }, { value: 'BOB', label: 'BOB (Bs.)' }]} />
+          <Select label="Moneda de cobro" value={form.currency} onChange={set('currency')} options={[{ value: 'BOB', label: 'Bolivianos (Bs)' }, { value: 'USD', label: 'Dólares (USD)' }]} />
+          <Input label={isBOB ? 'Monto (Bs)' : 'Monto (USD)'} type="number" step="0.01" min="0.01" value={form.amount} onChange={set('amount')} placeholder={isBOB ? '128760' : '18500'} readOnly={mode === 'phase' && computed != null} />
           <Input label="Vence" type="date" value={form.dueDate} onChange={set('dueDate')} required />
         </div>
 
@@ -167,7 +176,7 @@ export function NewInvoiceModal({ open, onClose, onSuccess }: Props) {
             step="0.01"
             value={form.exchangeRate}
             onChange={set('exchangeRate')}
-            hint={parseFloat(form.amountUSD) > 0 ? `Equivale a Bs. ${(parseFloat(form.amountUSD) * (parseFloat(form.exchangeRate) || 0)).toLocaleString('es-BO', { minimumFractionDigits: 2 })}` : undefined}
+            hint={parseFloat(form.amount) > 0 ? `Equivale a ${formatCurrency(Math.round((parseFloat(form.amount) / rate) * 100) / 100)} · la factura fiscal se emite en bolivianos` : 'La factura fiscal se emite en bolivianos'}
           />
         )}
 

@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Download, Send, Banknote, AlertTriangle, ArrowUpRight, CheckCircle2 } from 'lucide-react'
+import { useSession } from 'next-auth/react'
+import { Printer, Send, Banknote, AlertTriangle, ArrowUpRight, CheckCircle2 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Drawer } from '@/components/ui/Drawer'
@@ -13,6 +14,7 @@ import { ErrorBanner, Skeleton } from '@/components/ui/EmptyState'
 import { api } from '@/lib/api-client'
 import { INVOICE_STATUS, meta } from '@/lib/labels'
 import { formatCurrency, formatDate } from '@/lib/utils'
+import { FiscalSection, fmtBOB, type FiscalFields } from './FiscalSection'
 
 interface Invoice {
   id: string
@@ -27,9 +29,19 @@ interface Invoice {
   notes: string
   project: { id: string; code: string; name: string }
   client: { id: string; name: string; company: string; email: string; phone: string }
-  lineItems: { id: string; description: string; quantity: number; unitPriceUSD: number; totalUSD: number }[]
+  lineItems: { id: string; description: string; quantity: number; unitPriceUSD: number; totalUSD: number; totalBOB: number | null }[]
   payments: { id: string; amountUSD: number; paidAt: string; method: string | null; reference: string | null }[]
   paidAmount: number
+  fiscalStatus: FiscalFields['fiscalStatus']
+  fiscalNumber: number | null
+  cuf: string | null
+  fiscalIssuedAt: string | null
+  amountBOB: number | null
+  buyerName: string | null
+  buyerDocNumber: string | null
+  annulledAt: string | null
+  annulReasonCode: number | null
+  annulNote: string
 }
 
 interface Props {
@@ -41,7 +53,11 @@ interface Props {
 
 const METHODS = ['Transferencia', 'Depósito', 'Cheque', 'QR', 'Efectivo']
 
+const FISCAL_ROLES = new Set(['PRINCIPAL', 'ADMIN'])
+
 export function InvoiceDetailPanel({ invoiceId, open, onClose, onUpdate }: Props) {
+  const { data: session } = useSession()
+  const role = (session?.user as { role?: string } | undefined)?.role ?? ''
   const [invoice, setInvoice] = useState<Invoice | null>(null)
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -56,7 +72,9 @@ export function InvoiceDetailPanel({ invoiceId, open, onClose, onUpdate }: Props
     try {
       const inv = await api<Invoice>(`/api/invoices/${invoiceId}`)
       setInvoice(inv)
-      setPay((p) => ({ ...p, amount: String(Math.max(0, Math.round((inv.amountUSD - inv.paidAmount) * 100) / 100)) }))
+      const rem = Math.max(0, inv.amountUSD - inv.paidAmount)
+      const inBs = inv.amountBOB != null || inv.currency === 'BOB'
+      setPay((p) => ({ ...p, amount: String(Math.round(rem * (inBs ? inv.exchangeRate : 1) * 100) / 100) }))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Factura no encontrada')
     } finally {
@@ -93,8 +111,16 @@ export function InvoiceDetailPanel({ invoiceId, open, onClose, onUpdate }: Props
 
   async function recordPayment(e: React.FormEvent) {
     e.preventDefault()
-    const amount = parseFloat(pay.amount)
-    if (!(amount > 0)) return setError('Ingresa un monto válido')
+    const entered = parseFloat(pay.amount)
+    if (!(entered > 0) || !invoice) return setError('Ingresa un monto válido')
+    // Bs payments are stored in USD at the invoice rate; paying the full Bs
+    // balance settles the exact USD balance (no stray cent from rounding).
+    const remainingNow = Math.max(0, invoice.amountUSD - (invoice.paidAmount || 0))
+    const amount = payInBs
+      ? entered >= Math.round(remainingNow * invoice.exchangeRate * 100) / 100 - 0.005
+        ? Math.round(remainingNow * 100) / 100
+        : Math.round((entered / invoice.exchangeRate) * 100) / 100
+      : entered
     const ok = await run(() =>
       api(`/api/invoices/${invoiceId}/payments`, {
         method: 'POST',
@@ -108,6 +134,7 @@ export function InvoiceDetailPanel({ invoiceId, open, onClose, onUpdate }: Props
   }
 
   const remaining = invoice ? Math.max(0, invoice.amountUSD - (invoice.paidAmount || 0)) : 0
+  const payInBs = !!invoice && (invoice.amountBOB != null || invoice.currency === 'BOB')
   const isPaid = invoice?.status === 'PAID'
   const isOverdue = !!invoice && !isPaid && invoice.status !== 'DRAFT' && new Date(invoice.dueDate) < new Date()
   const st = invoice ? (isOverdue ? { label: 'Vencida', variant: 'red' as const } : meta(INVOICE_STATUS, invoice.status)) : null
@@ -121,8 +148,8 @@ export function InvoiceDetailPanel({ invoiceId, open, onClose, onUpdate }: Props
       title={invoice?.number ?? (loading ? 'Cargando…' : '')}
       actions={
         invoice && (
-          <Button size="sm" variant="ghost" onClick={() => window.open(`/api/invoices/${invoice.id}/pdf`, '_blank')} aria-label="Descargar PDF">
-            <Download className="w-4 h-4" /> PDF
+          <Button size="sm" variant="ghost" onClick={() => window.open(`/invoices/${invoice.id}/print`, '_blank')} aria-label="Ver e imprimir factura">
+            <Printer className="w-4 h-4" /> PDF
           </Button>
         )
       }
@@ -137,20 +164,22 @@ export function InvoiceDetailPanel({ invoiceId, open, onClose, onUpdate }: Props
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-2xs font-mono text-g40 uppercase tracking-wider">Monto</p>
-                <p className="font-display text-4xl text-white mt-1 tabular">{formatCurrency(invoice.amountUSD)}</p>
-                {invoice.currency === 'BOB' && (
-                  <p className="text-xs text-g40 mt-1 font-mono">
-                    Bs. {(invoice.amountUSD * invoice.exchangeRate).toLocaleString('es-BO', { minimumFractionDigits: 2 })} · TC {invoice.exchangeRate}
-                  </p>
+                {invoice.amountBOB != null || invoice.currency === 'BOB' ? (
+                  <>
+                    <p className="font-display text-4xl text-white mt-1 tabular">{fmtBOB(invoice.amountBOB ?? invoice.amountUSD * invoice.exchangeRate)}</p>
+                    <p className="text-xs text-g40 mt-1 font-mono">{formatCurrency(invoice.amountUSD)} · TC {invoice.exchangeRate}</p>
+                  </>
+                ) : (
+                  <p className="font-display text-4xl text-white mt-1 tabular">{formatCurrency(invoice.amountUSD)}</p>
                 )}
               </div>
               <Badge variant={st.variant} dot>{st.label}</Badge>
             </div>
             <div className="mt-4">
               <div className="flex justify-between text-2xs font-mono text-g40 mb-1.5 tabular">
-                <span>Cobrado {formatCurrency(invoice.paidAmount || 0)}</span>
+                <span>Cobrado {payInBs ? fmtBOB((invoice.paidAmount || 0) * invoice.exchangeRate) : formatCurrency(invoice.paidAmount || 0)}</span>
                 <span className={remaining > 0 ? (isOverdue ? 'text-red-300' : 'text-yellow-300') : 'text-green-300'}>
-                  {remaining > 0 ? `Saldo ${formatCurrency(remaining)}` : 'Saldado'}
+                  {remaining > 0 ? `Saldo ${payInBs ? fmtBOB(remaining * invoice.exchangeRate) : formatCurrency(remaining)}` : 'Saldado'}
                 </span>
               </div>
               <ProgressBar value={isPaid ? 100 : paidPct} variant={isPaid || remaining === 0 ? 'green' : isOverdue ? 'red' : 'yellow'} />
@@ -167,16 +196,25 @@ export function InvoiceDetailPanel({ invoiceId, open, onClose, onUpdate }: Props
             </div>
           </div>
 
+          <FiscalSection
+            inv={{ ...invoice, paymentsCount: invoice.payments.length }}
+            canManage={FISCAL_ROLES.has(role)}
+            onChanged={async () => {
+              await fetchInvoice()
+              onUpdate()
+            }}
+          />
+
           {/* Actions */}
           {!isPaid && (
             <div className="space-y-3">
               <div className="flex flex-wrap gap-2">
                 {invoice.status === 'DRAFT' && (
-                  <Button size="sm" onClick={() => updateStatus('SENT')} loading={busy}>
-                    <Send className="w-4 h-4" /> Emitir y enviar
+                  <Button size="sm" variant="secondary" onClick={() => updateStatus('SENT')} loading={busy}>
+                    <Send className="w-4 h-4" /> Enviar sin factura fiscal
                   </Button>
                 )}
-                {invoice.status !== 'DRAFT' && (
+                {invoice.status !== 'DRAFT' && invoice.fiscalStatus !== 'ANNULLED' && (
                   <Button size="sm" variant="success" onClick={() => setShowPay((s) => !s)} disabled={busy}>
                     <Banknote className="w-4 h-4" /> Registrar pago
                   </Button>
@@ -191,7 +229,7 @@ export function InvoiceDetailPanel({ invoiceId, open, onClose, onUpdate }: Props
               {showPay && (
                 <form onSubmit={recordPayment} className="rounded-lg border border-green-800/50 bg-green-950/20 p-4 space-y-3 animate-pop-in">
                   <div className="grid grid-cols-2 gap-3">
-                    <Input label="Monto (USD)" type="number" step="0.01" min="0.01" max={remaining} value={pay.amount} onChange={(e) => setPay({ ...pay, amount: e.target.value })} required />
+                    <Input label={payInBs ? 'Monto (Bs)' : 'Monto (USD)'} type="number" step="0.01" min="0.01" max={payInBs ? Math.round(remaining * invoice.exchangeRate * 100) / 100 : remaining} value={pay.amount} onChange={(e) => setPay({ ...pay, amount: e.target.value })} required />
                     <Select label="Método" value={pay.method} onChange={(e) => setPay({ ...pay, method: e.target.value })} options={METHODS.map((m) => ({ value: m, label: m }))} />
                   </div>
                   <Input label="Referencia (opcional)" value={pay.reference} onChange={(e) => setPay({ ...pay, reference: e.target.value })} placeholder="N° de transferencia" />
@@ -221,7 +259,7 @@ export function InvoiceDetailPanel({ invoiceId, open, onClose, onUpdate }: Props
                       <p className="text-sm text-g10">{item.description}</p>
                       {item.quantity !== 1 && <p className="text-2xs font-mono text-g40">{item.quantity} × {formatCurrency(item.unitPriceUSD)}</p>}
                     </div>
-                    <p className="text-sm font-mono text-white tabular">{formatCurrency(item.totalUSD)}</p>
+                    <p className="text-sm font-mono text-white tabular">{item.totalBOB != null ? fmtBOB(item.totalBOB) : payInBs ? fmtBOB(item.totalUSD * invoice.exchangeRate) : formatCurrency(item.totalUSD)}</p>
                   </div>
                 ))}
               </div>
@@ -241,7 +279,7 @@ export function InvoiceDetailPanel({ invoiceId, open, onClose, onUpdate }: Props
                       <p className="text-sm text-g10">{formatDate(p.paidAt)}</p>
                       <p className="text-2xs font-mono text-g40">{[p.method, p.reference].filter(Boolean).join(' · ') || '—'}</p>
                     </div>
-                    <p className="text-sm font-mono text-green-300 tabular">{formatCurrency(p.amountUSD)}</p>
+                    <p className="text-sm font-mono text-green-300 tabular">{payInBs ? fmtBOB(p.amountUSD * invoice.exchangeRate) : formatCurrency(p.amountUSD)}</p>
                   </div>
                 ))}
               </div>

@@ -167,6 +167,21 @@ enum ExpenseStatus {
   REIMBURSED // approved + paid back to the person who fronted it
 }
 
+enum IdDocType {
+  CI // 1 Cédula de identidad
+  CEX // 2 Cédula de extranjero
+  PAS // 3 Pasaporte
+  OD // 4 Otro documento
+  NIT // 5 NIT
+}
+
+enum FiscalStatus {
+  NOT_ISSUED // internal invoice only
+  ISSUED // fiscal number + CUF assigned, pending SIN validation
+  VALIDATED // accepted by the SIN (SIAT)
+  ANNULLED
+}
+
 enum TimeOffType {
   VACATION
   SICK
@@ -278,6 +293,11 @@ model Client {
   portalTokenHash     String?
   portalLastLogin     DateTime?
   notes               String     @default("")
+  /// Fiscal data printed on SIN invoices (razón social, NIT/CI)
+  billingName         String     @default("")
+  docType             IdDocType  @default(NIT)
+  docNumber           String     @default("")
+  docComplement       String     @default("")
   createdAt           DateTime   @default(now())
 
   // Relations
@@ -487,11 +507,36 @@ model Invoice {
   pdfUrl       String?
   createdAt    DateTime      @default(now())
 
+  // Bolivian fiscal invoice (SIN). Snapshot taken at issue time.
+  fiscalStatus       FiscalStatus @default(NOT_ISSUED)
+  fiscalNumber       Int?
+  cuf                String?
+  fiscalIssuedAt     DateTime?
+  /// 1 en línea, 2 fuera de línea (no SIAT connection)
+  fiscalEmissionType Int?
+  /// Invoice total in bolivianos (sum of line subtotals in Bs)
+  amountBOB          Float?
+  buyerName          String?
+  buyerDocType       IdDocType?
+  buyerDocNumber     String?
+  buyerDocComplement String?
+  leyenda            String?
+  sinReceptionCode   String?
+  annulledAt         DateTime?
+  annulReasonCode    Int?
+  annulNote          String       @default("")
+
   // Relations
   lineItems   InvoiceLineItem[]
   payments    Payment[]
   changeOrder ChangeOrder?
   expenses    Expense[]
+
+  /// Uniqueness comes from StudioFiscalSettings.nextFiscalNumber (atomic increment);
+  /// plain indexes keep `prisma db push` on deploy free of data-loss prompts.
+  @@index([fiscalNumber])
+  @@index([cuf])
+  @@index([fiscalIssuedAt])
 }
 
 model InvoiceLineItem {
@@ -502,6 +547,9 @@ model InvoiceLineItem {
   quantity     Float
   unitPriceUSD Float
   totalUSD     Float
+  /// Set when the invoice is issued to the SIN
+  unitPriceBOB Float?
+  totalBOB     Float?
 }
 
 model Payment {
@@ -512,6 +560,37 @@ model Payment {
   paidAt    DateTime @default(now())
   method    String?
   reference String?
+}
+
+// ---------------------------------------------------------------------------
+// Studio fiscal settings (singleton, id = "default")
+// ---------------------------------------------------------------------------
+
+model StudioFiscalSettings {
+  id                 String   @id @default("default")
+  nit                String   @default("")
+  razonSocial        String   @default("CHAO Arquitectura S.R.L.")
+  municipio          String   @default("Santa Cruz de la Sierra")
+  direccion          String   @default("")
+  telefono           String   @default("")
+  /// CAEB economic activity code registered with the SIN
+  actividadEconomica String   @default("")
+  /// SIN product/service code for the billed service
+  codigoProductoSin  String   @default("")
+  sucursal           Int      @default(0)
+  puntoVenta         Int      @default(0)
+  /// 1 electrónica en línea, 2 computarizada en línea
+  modalidad          Int      @default(2)
+  /// 1 producción, 2 pruebas (piloto)
+  ambiente           Int      @default(2)
+  leyenda            String   @default("")
+  /// Default Bs per USD for new invoices
+  exchangeRate       Float    @default(6.96)
+  /// Next fiscal invoice number (incremented atomically on issue)
+  nextFiscalNumber   Int      @default(1)
+  /// Chart of accounts for the journal export
+  accounts           Json?
+  updatedAt          DateTime @default(now()) @updatedAt
 }
 
 // ---------------------------------------------------------------------------

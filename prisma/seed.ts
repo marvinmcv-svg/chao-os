@@ -24,6 +24,7 @@ async function main() {
     prisma.comment.deleteMany(),
     prisma.document.deleteMany(),
     prisma.expense.deleteMany(),
+    prisma.studioFiscalSettings.deleteMany(),
     prisma.timeEntry.deleteMany(),
     prisma.task.deleteMany(),
     prisma.payment.deleteMany(),
@@ -203,6 +204,8 @@ async function main() {
       data: {
         name: 'Rodrigo Méndez',
         company: 'Inmobiliaria Oriente',
+        // Demo fiscal data (fictitious NIT/CI)
+        billingName: 'INMOBILIARIA ORIENTE S.R.L.', docType: 'NIT', docNumber: '1023456027',
         email: 'rmendez@inmobiliariaoriente.bo',
         phone: '+591 70123456',
         type: ClientType.ACTIVE,
@@ -219,6 +222,8 @@ async function main() {
       data: {
         name: 'Dr. Carlos Iturralde',
         company: 'Grupo Médico Rita',
+        // Demo fiscal data (fictitious NIT/CI)
+        billingName: 'GRUPO MÉDICO RITA S.A.', docType: 'NIT', docNumber: '2034567018',
         email: 'citurralde@gmritta.bo',
         phone: '+591 70223456',
         type: ClientType.ACTIVE,
@@ -235,6 +240,8 @@ async function main() {
       data: {
         name: 'María Elena de Méndez',
         company: 'Familia Méndez',
+        // Demo fiscal data (fictitious NIT/CI)
+        billingName: 'MARÍA MÉNDEZ ROCA', docType: 'CI', docNumber: '4567890', docComplement: '1A',
         email: 'maria.mendez@email.bo',
         phone: '+591 70323456',
         type: ClientType.ACTIVE,

@@ -61,7 +61,7 @@ Scope: full review of the Next.js app (8 modules, 45 API routes), hands-on testi
 | Time-off / holidays in capacity | Vantagepoint, Mosaic | ✗ | ✅ Phase 2: Bolivian calendar, studio closures, absence approvals |
 | Expenses & reimbursables UI | BQE, Vantagepoint | Model only | ✅ Phase 5: approval flow, receipts, BOB/USD, rebilling with markup, staff reimbursement |
 | Fee proposals / estimates | Factor, Monograph | AI draft endpoint only | ✅ Phase 3 (see below) |
-| Accounting sync (QuickBooks/Xero/SIN-Bolivia e-invoicing) | All | ✗ | ✗ |
+| Accounting sync (QuickBooks/Xero/SIN-Bolivia e-invoicing) | All | ✗ | ◐ Phase 6: SIN fiscal invoices (number, CUF, QR, Bs), Registro de Ventas + journal CSV; live SIAT transmission pending credentials |
 | Change orders / additional services | Factor, Vantagepoint | ✗ | ✅ Phase 4: client approval in the portal, contract fee/phase/end date update on approval, invoice from an approved change |
 | Resource scheduling (assign hours forward) | Mosaic, Synergy | ✗ | ✅ Phase 2: weekly allocations, drag-to-reassign planner |
 | Fee proposal → project budget | Factor, Monograph | ✗ | ✅ Phase 3: estimate by phase × role, versioned proposals, printable PDF, budget on win |
@@ -82,7 +82,7 @@ Scope: full review of the Next.js app (8 modules, 45 API routes), hands-on testi
 2. ~~**Fee proposals:** estimate builder by phase → proposal PDF → becomes the project budget on win (closes the BD → project loop like Factor).~~ Done in Phase 3 (§8).
 3. ~~**Change orders & additional services** with client approval in the portal.~~ Done in Phase 4 (§9).
 4. ~~**Expenses & reimbursables** UI, billable markup, receipt upload (S3 is already wired).~~ Done in Phase 5 (§10).
-5. **Bolivian e-invoicing (SIN)** and accounting export; BOB-first invoices.
+5. ~~**Bolivian e-invoicing (SIN)** and accounting export; BOB-first invoices.~~ Done in Phase 6 (§11), except live transmission to the SIAT, which needs the studio's SIN credentials.
 6. **Portal documents:** stored `url` is an S3 key, not a link — serve presigned GET URLs for approved documents.
 7. **Data quality:** project `totalSpentUSD` should be derived from timesheets × cost rate + expenses rather than entered, so earned value and CPI are live.
 8. **Roles:** enforce role-based visibility of fees and margins (architects should not see firm-wide P&L).
@@ -150,4 +150,32 @@ Scope: full review of the Next.js app (8 modules, 45 API routes), hands-on testi
 **Verified:** 460 unit and integration tests (including 32 for `ExpenseService`), typecheck, lint, `next build`, and a 21-step Playwright run against seeded Postgres. That run covered: an architect recording a Bs 348 out-of-pocket, billable expense with a receipt (stored as $50 → $55 billed); the receipt opening inline; self-approval and billing refused with 403; oversize and wrong-type receipts refused; the PM approving and rejecting in the drawer; Escape closing only the modal; drawer totals; the rejection notification and resubmission; the cross-project Finance queue; an admin reimbursement; a PM's reimbursement refused; billing at $187 with markup; a second billing refused with 422 and the billed expense locked; deleting the draft releasing the expenses; P&L counting only approved costs; and mobile with no horizontal scroll. Zero console errors.
 
 **Next:** item 7 (derive `totalSpentUSD` from timesheets × cost rate + approved expenses) now has its expense half in place.
+
+## 11. Phase 6: Bolivian fiscal invoicing (SIN) and accounting export
+
+**Scope and limits.** CHAO OS now prepares everything a computerised online fiscal invoice needs, short of transmitting it to the SIN. Transmission is signed XML over the SIAT SOAP services and needs the studio's delegated token, CUIS/CUFD codes and a digital signature, none of which exist yet. Until then, invoices are issued *fuera de línea* (tipo de emisión 2), shown as **Emitida · pendiente SIN**, and printed with a "PENDIENTE DE VALIDACIÓN SIN" watermark. This holds even if `SIAT_*` variables are set, because nothing is sent. Settings → Integraciones shows the SIAT as not connected.
+
+**Studio fiscal data** (`StudioFiscalSettings`, Configuración → Datos fiscales): NIT, razón social, municipio, address and phone, CAEB activity code, SIN product code, sucursal and punto de venta, modality, environment (pilot/production), the Ley 453 legend, the default Bs/USD rate (6.96) and the chart of accounts for the journal. Issuing is blocked, with a list of what's missing, until the NIT, CAEB and product code are filled in. Only principals and admins can edit.
+
+**Client billing data:** each client has a billing name, a document type (NIT, CI, CEX, passport or other), a number and a complement, edited in Clientes → client → Datos de facturación. NIT and CI must be digits, and a NIT has no complement. A client without a NIT/CI can't be invoiced, and the error links to Clientes.
+
+**Issuing** (Finanzas → factura → *Emitir factura fiscal*; principals and admins only). In one transaction, it takes the next number from an atomic counter, converts each line to bolivianos (rounded per line; the total is the sum of the lines), snapshots the buyer's name and NIT/CI and the legend, and computes the **CUF**. The CUF is NIT(13) + local timestamp with milliseconds (17) + sucursal(4) + modalidad + tipo emisión + tipo factura + documento sector(2) + número(10) + punto de venta(4), plus SIN's módulo 11 check digit, converted to base 16, plus the CUFD control code (empty without a CUFD). A lost race rolls back the counter, so no number is ever burnt. A draft becomes *Enviada* (the client is emailed).
+
+After issue, the amount, currency and rate are frozen and the invoice can't be deleted; only notes and the due date can change. Annulling takes a SIN reason code (1–4) and is refused while payments exist. An annulled invoice accepts no payments, and its number is never reused. The SIN's deadline for annulments isn't enforced: confirm it with your accountant.
+
+**BOB first:** new invoices default to bolivianos at the studio rate, and the amount is entered in Bs (USD stays the internal base for analytics). The invoice drawer and Finance list show Bs first, with USD below. Payments are entered in Bs, and paying the full Bs balance settles the exact USD balance, so rounding never leaves a stray cent.
+
+**Printing** (`/invoices/:id/print`, browser print to PDF, which works on Vercel unlike the old Puppeteer placeholder). It follows the SIN graphic representation: issuer block, NIT, invoice number and CUF, buyer data, a detail table in Bs with the SIN product code, subtotal/discount/total/gift card/amount to pay/credit base, the amount in words ("Son: … 00/100 Bolivianos"), the legends, and a verification QR for `siat.impuestos.gob.bo` (or `pilotosiat` in the pilot environment). Invoices not issued to the SIN print as a "Nota de cobro" marked "sin valor fiscal".
+
+**Taxes and exports** (Finanzas → *Impuestos y contabilidad*): a month picker in Bolivian time, monthly sales, IVA débito fiscal at 13% (Formulario 200), IT at 3% (Formulario 400), and how many invoices are pending SIN validation or were sent without a fiscal invoice. There are two CSV exports:
+- **Registro de Ventas**: the 24-column RCV layout. Valid invoices are `V` with base and débito fiscal; annulled ones are `A` with zeros.
+- **Libro diario**: issue (Dr receivables / Cr revenue 87% + IVA 13%; Dr IT expense / Cr IT payable 3%), collection (Dr banks / Cr receivables at the invoice rate) and an annulment reversal. Totals balance.
+
+Have an accountant review both layouts before filing.
+
+**Deploy safety:** the new invoice columns use plain indexes rather than unique constraints. Uniqueness comes from the atomic counter. This keeps `prisma db push` in the Vercel build free of data-loss prompts, which would otherwise fail the deploy.
+
+**Verified:** 499 unit and integration tests (including 24 for `lib/siat`, covering módulo 11, the CUF layout, Bolivian time, amounts in words up to millions with *veintiún*/*un* apocope, taxes and the QR URL, and 15 for `FiscalService`, covering issue, races, annulment, the RCV and a balanced journal), typecheck, lint, `next build`, and a 15-step Playwright run against seeded Postgres with zero console errors. The run covered: completing the studio's fiscal data; client NIT validation; a new invoice in Bs (Bs 69,600 → $10,000); issuing invoice N° 1 with a CUF, the buyer snapshot and draft → sent; the print page with legal text, amount in words, QR and watermark; the issued invoice refusing edits and deletion; issuing refused for a client without NIT; invoice N° 2 annulled with a SIN reason and its payment refused; a payment in Bs settling exactly; monthly IVA and IT; the RCV CSV with V/A rows; a balanced journal; an architect refused with 403 and shown read-only settings; and mobile with no horizontal scroll.
+
+**To go live with the SIN:** register the system with the SIN (*sistema propio*), obtain the delegated token, CUIS and digital signature, and implement CUFD retrieval plus XML signing and submission. The CUF and the QR are already in place.
 

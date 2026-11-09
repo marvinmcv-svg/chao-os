@@ -53,6 +53,9 @@ export type CreateInvoiceInput = z.infer<typeof CreateInvoiceSchema>
 export type UpdateInvoiceInput = z.infer<typeof UpdateInvoiceSchema>
 export type CreatePaymentInput = z.infer<typeof CreatePaymentSchema>
 
+/** Issued to the SIN (fiscal number assigned, possibly annulled). */
+const isFiscal = (i: { fiscalStatus?: string | null }) => !!i.fiscalStatus && i.fiscalStatus !== 'NOT_ISSUED'
+
 export const InvoiceService = {
   // ─── list ──────────────────────────────────────────────────────────────
 
@@ -205,6 +208,13 @@ export const InvoiceService = {
   async update(args: { currentUser: AuthUser; id: string; data: UpdateInvoiceInput }) {
     const existing = await prisma.invoice.findUnique({ where: { id: args.id } })
     if (!existing) throw new NotFoundError('Invoice', args.id)
+    if (isFiscal(existing)) {
+      // A fiscal invoice is immutable: only internal fields may change.
+      const fiscalFields = ['milestoneLabel', 'amountUSD', 'currency', 'exchangeRate'] as const
+      if (fiscalFields.some((k) => args.data[k] !== undefined)) {
+        throw new InvalidStateError('La factura ya fue emitida al SIN: no se puede modificar el monto ni la moneda. Anúlala y emite una nueva.')
+      }
+    }
 
     const updateData: Record<string, unknown> = { ...args.data }
     if (args.data.dueDate) updateData.dueDate = new Date(args.data.dueDate)
@@ -244,8 +254,8 @@ export const InvoiceService = {
     const existing = await prisma.invoice.findUnique({ where: { id: args.id } })
     if (!existing) throw new NotFoundError('Invoice', args.id)
 
-    if (existing.status !== 'DRAFT') {
-      throw new InvalidStateError('Solo facturas en estado DRAFT pueden eliminarse')
+    if (existing.status !== 'DRAFT' || isFiscal(existing)) {
+      throw new InvalidStateError('Solo facturas en borrador y sin emisión fiscal pueden eliminarse')
     }
 
     await prisma.invoice.delete({ where: { id: args.id } })
@@ -376,6 +386,7 @@ export const InvoiceService = {
       },
     })
     if (!invoice) throw new NotFoundError('Invoice', args.id)
+    if (invoice.fiscalStatus === 'ANNULLED') throw new InvalidStateError('La factura fiscal está anulada; no admite cobros')
 
     const existingPayments = await prisma.payment.findMany({
       where: { invoiceId: args.id },
