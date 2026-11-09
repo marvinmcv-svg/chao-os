@@ -15,6 +15,7 @@ import { cn, formatCompact, formatCurrency, formatDate } from '@/lib/utils'
 import { DocumentUpload } from './DocumentUpload'
 import { DocumentList } from './DocumentList'
 import { ChangeOrdersSection } from './ChangeOrdersSection'
+import { ExpensesSection } from '@/components/expenses/ExpensesSection'
 
 interface ProjectDetail {
   id: string
@@ -229,6 +230,14 @@ export function ProjectDetailPanel({ projectId, open, onClose, onUpdate }: Props
           <ChangeOrdersSection
             projectId={project.id}
             onContractChanged={() => {
+              fetchProject()
+              onUpdate()
+            }}
+          />
+
+          <ExpensesSection
+            projectId={project.id}
+            onChanged={() => {
               fetchProject()
               onUpdate()
             }}

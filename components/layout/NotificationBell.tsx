@@ -22,6 +22,8 @@ type NotificationType =
   | 'DEADLINE_APPROACHING'
   | 'PROJECT_STATUS_CHANGE'
   | 'CHANGE_ORDER_DECIDED'
+  | 'EXPENSE_SUBMITTED'
+  | 'EXPENSE_DECIDED'
 
 interface Notification {
   id: string
@@ -52,6 +54,8 @@ function getTypeColor(type: NotificationType): string {
     case 'DOCUMENT_UPLOADED':
     case 'PROJECT_STATUS_CHANGE':
     case 'CHANGE_ORDER_DECIDED':
+    case 'EXPENSE_SUBMITTED':
+    case 'EXPENSE_DECIDED':
     default:
       return 'border-l-blue-500'
   }

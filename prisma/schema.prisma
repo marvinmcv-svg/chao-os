@@ -148,6 +148,25 @@ enum ChangeOrderStatus {
   VOID
 }
 
+enum ExpenseCategory {
+  TRAVEL // viajes, combustible, peajes
+  PRINTING // ploteos, impresiones, copias
+  RENDERING // visualización 3D externa
+  CONSULTANT // consultores / especialistas
+  PERMITS // trámites, tasas, aprobaciones municipales
+  MODELS // maquetas
+  SURVEY // topografía, estudios de suelo
+  MEALS
+  OTHER
+}
+
+enum ExpenseStatus {
+  SUBMITTED // awaiting approval
+  APPROVED
+  REJECTED
+  REIMBURSED // approved + paid back to the person who fronted it
+}
+
 enum TimeOffType {
   VACATION
   SICK
@@ -178,6 +197,8 @@ enum NotificationType {
   DEADLINE_APPROACHING
   PROJECT_STATUS_CHANGE
   CHANGE_ORDER_DECIDED
+  EXPENSE_SUBMITTED
+  EXPENSE_DECIDED
 }
 
 // ============================================================================
@@ -217,6 +238,8 @@ model User {
   allocations        Allocation[]
   feeProposals       FeeProposal[]    @relation("ProposalAuthor")
   changeOrders       ChangeOrder[]    @relation("ChangeOrderAuthor")
+  submittedExpenses  Expense[]        @relation("ExpenseSubmitter")
+  reviewedExpenses   Expense[]        @relation("ExpenseReviewer")
 }
 
 model TeamMember {
@@ -468,6 +491,7 @@ model Invoice {
   lineItems   InvoiceLineItem[]
   payments    Payment[]
   changeOrder ChangeOrder?
+  expenses    Expense[]
 }
 
 model InvoiceLineItem {
@@ -561,16 +585,60 @@ model TimeEntry {
 // ---------------------------------------------------------------------------
 
 model Expense {
-  id          String   @id @default(cuid())
-  projectId   String
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  description String
-  amountUSD   Float
-  currency    Currency @default(USD)
-  incurredAt  DateTime
-  createdAt   DateTime @default(now())
+  id             String          @id @default(cuid())
+  projectId      String
+  project        Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  description    String
+  category       ExpenseCategory @default(OTHER)
+  vendor         String          @default("")
+  /// Phase the cost belongs to (null = general / not phase specific)
+  phase          ProjectPhase?
+  /// Cost in USD (canonical; converted from `amountOriginal` when paid in BOB)
+  amountUSD      Float
+  currency       Currency        @default(USD)
+  /// Amount as paid, in `currency`
+  amountOriginal Float?
+  /// BOB per USD used for the conversion (1 for USD)
+  exchangeRate   Float           @default(1)
+  incurredAt     DateTime
+  /// Rebilled to the client (reimbursable expense)
+  billable       Boolean         @default(false)
+  /// Markup applied when rebilling, in percent (e.g. 10 = cost × 1.10)
+  markupPercent  Float           @default(0)
+  /// Paid out of pocket by a team member, who must be paid back
+  paidByStaff    Boolean         @default(false)
+  /// Rows that predate the approval flow are treated as approved
+  status         ExpenseStatus   @default(APPROVED)
+  submittedById  String?
+  submittedBy    User?           @relation("ExpenseSubmitter", fields: [submittedById], references: [id], onDelete: SetNull)
+  reviewedById   String?
+  reviewedBy     User?           @relation("ExpenseReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt     DateTime?
+  reviewNote     String          @default("")
+  reimbursedAt   DateTime?
+  /// Receipt: S3 object key when S3 is configured, else "db" (bytes in ExpenseReceipt)
+  receiptKey     String?
+  receiptName    String?
+  receiptMime    String?
+  receiptSize    Int?
+  receipt        ExpenseReceipt?
+  /// Invoice the expense was rebilled on (null = not billed yet)
+  invoiceId      String?
+  invoice        Invoice?        @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @default(now()) @updatedAt
 
   @@index([projectId])
+  @@index([status])
+  @@index([submittedById])
+  @@index([invoiceId])
+}
+
+/// Receipt bytes, used only when no S3 bucket is configured.
+model ExpenseReceipt {
+  expenseId String  @id
+  expense   Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  data      Bytes
 }
 
 // ---------------------------------------------------------------------------

@@ -81,6 +81,25 @@ export const CHANGE_ORDER_KIND: Record<string, string> = {
   ADDITIONAL_SERVICE: 'Servicio adicional',
 }
 
+export const EXPENSE_STATUS: Record<string, Meta> = {
+  SUBMITTED: { label: 'Por aprobar', variant: 'yellow' },
+  APPROVED: { label: 'Aprobado', variant: 'green' },
+  REJECTED: { label: 'Rechazado', variant: 'red' },
+  REIMBURSED: { label: 'Reembolsado', variant: 'blue' },
+}
+
+export const EXPENSE_CATEGORY: Record<string, string> = {
+  TRAVEL: 'Viajes y movilidad',
+  PRINTING: 'Impresión y ploteo',
+  RENDERING: 'Renders y visualización',
+  CONSULTANT: 'Consultores',
+  PERMITS: 'Trámites y tasas',
+  MODELS: 'Maquetas',
+  SURVEY: 'Topografía y estudios',
+  MEALS: 'Alimentación',
+  OTHER: 'Otros',
+}
+
 export const CONTRACT_TYPE: Record<string, string> = {
   FIXED_FEE: 'Honorario fijo',
   PERCENTAGE: '% de obra',

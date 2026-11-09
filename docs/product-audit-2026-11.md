@@ -59,8 +59,8 @@ Scope: full review of the Next.js app (8 modules, 45 API routes), hands-on testi
 | Global search / ⌘K | Modern SaaS | ✗ | ✅ Projects, leads, invoices, clients, actions |
 | Mobile | All | ✗ | ✅ Responsive shell |
 | Time-off / holidays in capacity | Vantagepoint, Mosaic | ✗ | ✅ Phase 2: Bolivian calendar, studio closures, absence approvals |
-| Expenses & reimbursables UI | BQE, Vantagepoint | Model only | ✗ |
-| Fee proposals / estimates | Factor, Monograph | AI draft endpoint only | ✗ (no UI) |
+| Expenses & reimbursables UI | BQE, Vantagepoint | Model only | ✅ Phase 5: approval flow, receipts, BOB/USD, rebilling with markup, staff reimbursement |
+| Fee proposals / estimates | Factor, Monograph | AI draft endpoint only | ✅ Phase 3 (see below) |
 | Accounting sync (QuickBooks/Xero/SIN-Bolivia e-invoicing) | All | ✗ | ✗ |
 | Change orders / additional services | Factor, Vantagepoint | ✗ | ✅ Phase 4: client approval in the portal, contract fee/phase/end date update on approval, invoice from an approved change |
 | Resource scheduling (assign hours forward) | Mosaic, Synergy | ✗ | ✅ Phase 2: weekly allocations, drag-to-reassign planner |
@@ -81,7 +81,7 @@ Scope: full review of the Next.js app (8 modules, 45 API routes), hands-on testi
 1. ~~**Capacity realism:** time-off and holidays (Bolivian calendar), forward resource allocation per project/phase, drag-to-reassign on the heatmap.~~ Done in Phase 2 (§7).
 2. ~~**Fee proposals:** estimate builder by phase → proposal PDF → becomes the project budget on win (closes the BD → project loop like Factor).~~ Done in Phase 3 (§8).
 3. ~~**Change orders & additional services** with client approval in the portal.~~ Done in Phase 4 (§9).
-4. **Expenses & reimbursables** UI, billable markup, receipt upload (S3 is already wired).
+4. ~~**Expenses & reimbursables** UI, billable markup, receipt upload (S3 is already wired).~~ Done in Phase 5 (§10).
 5. **Bolivian e-invoicing (SIN)** and accounting export; BOB-first invoices.
 6. **Portal documents:** stored `url` is an S3 key, not a link — serve presigned GET URLs for approved documents.
 7. **Data quality:** project `totalSpentUSD` should be derived from timesheets × cost rate + expenses rather than entered, so earned value and CPI are live.
@@ -134,3 +134,20 @@ Scope: full review of the Next.js app (8 modules, 45 API routes), hands-on testi
 **Also fixed:** the portal project endpoint now goes through `PortalService`, so phase `spentUSD` (internal cost) no longer reaches the client, and portal error messages are in Spanish. Escape inside a modal opened from a drawer used to close the drawer too. Drawers and modals now share one overlay stack, so Escape closes only the topmost layer.
 
 **Verified:** 428 unit and integration tests (including 26 for `ChangeOrderService` and new portal tests for change-order visibility, field sanitisation and bad tokens), typecheck, lint, `next build`, and a 17-step Playwright run against seeded Postgres. That run covered: create, edit, send, credit plus void, minting a portal link, anonymous mobile portal with no horizontal scroll and the voided change hidden, no `spentUSD`/`hours`/author in the portal payload, bad token 401, client approval with a typed name, fee/DD-phase/end-date update, a second decision refused with 422, staff summary and notification, invoice from the change, a staff-recorded paper approval, and the architect's read-only view with 403. Zero console errors.
+
+## 10. Phase 5: expenses and reimbursables
+
+**Model** (`Expense`, extended in place so existing rows survive `db push`): category (travel, printing, renders, consultants, permits, models, survey, meals, other), vendor, optional phase, the amount as paid in USD or bolivianos with the exchange rate (default 6.96) and the USD conversion, date, two flags and a status. The flags are *billable* (rebilled to the client at cost × (1 + markup%)) and *paid by staff* (someone fronted it out of pocket). Older rows default to `APPROVED`, so historical P&L does not change.
+
+**Approval:** anyone on the team records an expense from the project drawer (Proyectos → proyecto → Gastos y reembolsables). A team member's expense is `SUBMITTED`, and the PM gets an `EXPENSE_SUBMITTED` notification. Expenses entered by principals, admins or the PM are approved on entry. The PM, principals and admins approve, or reject with a required reason. Nobody but a principal or admin can approve their own expense. The submitter gets `EXPENSE_DECIDED` and can correct a rejected expense, which resubmits it. Decisions are conditional updates on `status = SUBMITTED`, so two reviewers can't both decide (the loser gets 422). Only `APPROVED`/`REIMBURSED` expenses count as project cost in P&L.
+
+**Reimbursement:** Finanzas → Gastos y reembolsos has queues for *Por aprobar*, *Por reembolsar* (with the total owed per person), *Mis gastos* and *Todos*. Principals and admins mark out-of-pocket expenses as reimbursed. PMs see their own expenses and their projects'. Everyone else sees only their own.
+
+**Rebilling:** "Facturar $X" in the drawer creates one draft invoice with a line per approved, billable, unbilled expense (cost + markup, vendor in the description). Each expense is claimed with `invoiceId = null` as a condition. If anything was billed concurrently, the draft is deleted and the claim released. Billed or reimbursed expenses are locked. Deleting the draft invoice releases its expenses (`onDelete: SetNull`).
+
+**Receipts:** PDF, JPG, PNG, WEBP or HEIC, up to 4 MB, uploaded through the API (multipart). They go to S3 under `projects/<id>/receipts/` when S3 is configured (production has the variables), and to Postgres (`ExpenseReceipt`) otherwise, so preview deployments work too. Viewing goes through `/api/expenses/:id/receipt`, which redirects to a 5-minute presigned URL or streams the bytes. The storage key is never sent to the browser.
+
+**Verified:** 460 unit and integration tests (including 32 for `ExpenseService`), typecheck, lint, `next build`, and a 21-step Playwright run against seeded Postgres. That run covered: an architect recording a Bs 348 out-of-pocket, billable expense with a receipt (stored as $50 → $55 billed); the receipt opening inline; self-approval and billing refused with 403; oversize and wrong-type receipts refused; the PM approving and rejecting in the drawer; Escape closing only the modal; drawer totals; the rejection notification and resubmission; the cross-project Finance queue; an admin reimbursement; a PM's reimbursement refused; billing at $187 with markup; a second billing refused with 422 and the billed expense locked; deleting the draft releasing the expenses; P&L counting only approved costs; and mobile with no horizontal scroll. Zero console errors.
+
+**Next:** item 7 (derive `totalSpentUSD` from timesheets × cost rate + approved expenses) now has its expense half in place.
+

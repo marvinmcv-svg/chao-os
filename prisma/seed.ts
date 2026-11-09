@@ -1116,32 +1116,60 @@ async function main() {
   // =========================================================================
   // SAMPLE EXPENSES
   // =========================================================================
+  // One of each workflow state: approved + rebilled with markup, submitted
+  // out-of-pocket travel awaiting the PM, approved render to be reimbursed.
   const expenses = await Promise.all([
     prisma.expense.create({
       data: {
         projectId: projects[0].id,
         description: 'Viaje a sitio de construcción',
+        category: 'TRAVEL',
+        vendor: 'YPFB — combustible',
         amountUSD: 85.0,
-        currency: Currency.USD,
+        amountOriginal: 591.6,
+        currency: Currency.BOB,
+        exchangeRate: 6.96,
         incurredAt: new Date('2025-01-15'),
+        paidByStaff: true,
+        status: 'SUBMITTED',
+        submittedById: jorgeUser.id,
       },
     }),
     prisma.expense.create({
       data: {
         projectId: projects[1].id,
         description: 'Impresión de planos - Entrega cliente',
+        category: 'PRINTING',
+        vendor: 'Ploteos Santa Cruz',
         amountUSD: 120.0,
+        amountOriginal: 120.0,
         currency: Currency.USD,
         incurredAt: new Date('2025-02-01'),
+        billable: true,
+        markupPercent: 10,
+        status: 'APPROVED',
+        submittedById: sofiaUser.id,
+        reviewedById: sofiaUser.id,
+        reviewedAt: new Date('2025-02-01'),
       },
     }),
     prisma.expense.create({
       data: {
         projectId: projects[4].id,
         description: 'Visualización 3D exterior - Hotel Camiri',
+        category: 'RENDERING',
+        vendor: 'Render Lab',
         amountUSD: 450.0,
+        amountOriginal: 450.0,
         currency: Currency.USD,
         incurredAt: new Date('2025-02-10'),
+        billable: true,
+        markupPercent: 15,
+        paidByStaff: true,
+        status: 'APPROVED',
+        submittedById: paulaUser.id,
+        reviewedById: admin.id,
+        reviewedAt: new Date('2025-02-11'),
       },
     }),
   ])

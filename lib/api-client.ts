@@ -11,7 +11,8 @@ export class ApiClientError extends Error {
 export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
-    headers: init?.body ? { 'Content-Type': 'application/json', ...(init?.headers || {}) } : init?.headers,
+    // FormData sets its own multipart boundary — never override it
+    headers: init?.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json', ...(init?.headers || {}) } : init?.headers,
   })
   let json: any = null
   try {

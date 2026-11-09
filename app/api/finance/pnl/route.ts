@@ -20,7 +20,8 @@ export const GET = withApiHandler(async (req: NextRequest) => {
         where: { status: { not: 'DRAFT' } },
         select: { amountUSD: true, status: true },
       },
-      expenses: { select: { amountUSD: true } },
+      // Only approved costs count; submitted/rejected ones are not real spend yet
+      expenses: { where: { status: { in: ['APPROVED', 'REIMBURSED'] } }, select: { amountUSD: true } },
       timeEntries: {
         select: { hours: true, user: { select: { teamMember: { select: { hourlyRate: true } } } } },
       },

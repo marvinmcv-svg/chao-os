@@ -116,3 +116,32 @@ export async function deleteObject(fileKey: string): Promise<void> {
   })
   await client.send(command)
 }
+// ── Server-side upload (small files, e.g. expense receipts) ──────────────────
+
+/** True when all S3 env vars are present. Callers fall back to DB storage otherwise. */
+export function isS3Configured(): boolean {
+  return !!(getRegion() && getAccessKeyId() && getSecretAccessKey() && getBucket())
+}
+
+export function buildReceiptKey(projectId: string, expenseId: string, filename: string): string {
+  return `projects/${sanitizeKey(projectId)}/receipts/${sanitizeKey(expenseId)}-${sanitizeKey(filename)}`
+}
+
+export async function putObject(fileKey: string, body: Uint8Array, mimeType: string): Promise<void> {
+  const bucket = requireEnv('DOCUMENTS_S3_BUCKET', getBucket())
+  await getS3Client().send(
+    new PutObjectCommand({ Bucket: bucket, Key: fileKey, Body: body, ContentType: mimeType })
+  )
+}
+
+/** Short-lived (5 min) download link that opens inline in the browser. */
+export async function getPresignedViewUrl(fileKey: string, filename: string, mimeType: string): Promise<string> {
+  const bucket = requireEnv('DOCUMENTS_S3_BUCKET', getBucket())
+  const command = new GetObjectCommand({
+    Bucket: bucket,
+    Key: fileKey,
+    ResponseContentType: mimeType,
+    ResponseContentDisposition: `inline; filename="${filename.replace(/[^\w.\- ]/g, '_')}"`,
+  })
+  return getSignedUrl(getS3Client(), command, { expiresIn: 5 * 60 })
+}

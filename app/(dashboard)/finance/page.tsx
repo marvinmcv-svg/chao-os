@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { InvoiceDetailPanel } from '@/components/finance/InvoiceDetailPanel'
 import { NewInvoiceModal } from '@/components/modals/NewInvoiceModal'
 import { FinanceCharts, type CashFlowData, type PnLRow } from '@/components/finance/FinanceCharts'
+import { ExpensesQueue } from '@/components/expenses/ExpensesQueue'
 import { api } from '@/lib/api-client'
 import { INVOICE_STATUS, meta } from '@/lib/labels'
 import { cn, formatCompact, formatCurrency, formatDate } from '@/lib/utils'
@@ -54,6 +55,8 @@ function FinanceInner() {
     const id = params.get('invoice')
     if (id) setSelectedId(id)
     if (params.get('new')) setShowNew(true)
+    const tab = params.get('tab')
+    if (tab === 'expenses' || tab === 'analytics') setView(tab)
   }, [params])
 
   // Previously this page rendered hard-coded mock invoices from a different
@@ -142,6 +145,7 @@ function FinanceInner() {
       <Tabs
         tabs={[
           { id: 'invoices', label: 'Facturas', count: invoices?.length },
+          { id: 'expenses', label: 'Gastos y reembolsos' },
           { id: 'analytics', label: 'Rentabilidad y flujo de caja' },
         ]}
         activeTab={view}
@@ -233,6 +237,8 @@ function FinanceInner() {
           </div>
         </>
       )}
+
+      {view === 'expenses' && <ExpensesQueue />}
 
       {view === 'analytics' && (pnl === null ? <Skeleton className="h-96 rounded-lg" /> : <FinanceCharts pnlData={pnl} cashFlowData={cashflow} />)}
 
