@@ -24,6 +24,7 @@ import {
   ForbiddenError,
 } from '@/lib/result'
 import type { Milestone, ProjectPhase } from '@prisma/client'
+import { getPresignedViewUrl } from '@/lib/s3'
 import {
   ChangeOrderService,
   PORTAL_VISIBLE_STATUSES,
@@ -79,10 +80,13 @@ export type PortalProjectData = {
     issuedAt: Date
     dueDate: Date
   }>
+  /** Approved documents only. The storage key never leaves the server:
+   *  downloads go through /api/portal/project/:id/documents/:docId. */
   documents: Array<{
     id: string
     filename: string
-    url: string
+    mimeType: string | null
+    sizeBytes: number | null
     uploadedAt: Date
     phase: ProjectPhase | null
   }>
@@ -217,7 +221,8 @@ export const PortalService = {
           select: {
             id: true,
             filename: true,
-            url: true,
+            mimeType: true,
+            sizeBytes: true,
             uploadedAt: true,
             phase: true,
           },
@@ -268,6 +273,35 @@ export const PortalService = {
    * @throws NotFoundError      change order not visible to this client
    * @throws InvalidStateError  already decided
    */
+  /**
+   * Resolve a short-lived (5 min) signed download URL for one APPROVED
+   * document of the client's project, and count the download.
+   * Ownership chain: token → client → project → approved document. Any
+   * miss is a 404 (no hint about which documents exist).
+   *
+   * @throws UnauthorizedError        bad / disabled token
+   * @throws NotFoundError            not this client's, or not approved
+   * @throws StorageUnavailableError  S3 not configured (503)
+   */
+  async getDocumentDownload(args: { token?: string; projectId: string; documentId: string }) {
+    const client = await clientForToken(args.token)
+    const doc = await prisma.document.findFirst({
+      where: { id: args.documentId, projectId: args.projectId, status: 'APPROVED', project: { clientId: client.id } },
+      select: { id: true, url: true, filename: true, mimeType: true },
+    })
+    if (!doc) throw new NotFoundError('Documento', args.documentId)
+    // PDFs and images open in the browser; CAD and other files download.
+    const inline = !!doc.mimeType && (doc.mimeType === 'application/pdf' || doc.mimeType.startsWith('image/'))
+    const url = await getPresignedViewUrl(doc.url, doc.filename, doc.mimeType ?? 'application/octet-stream', {
+      disposition: inline ? 'inline' : 'attachment',
+    })
+    await prisma.document.update({
+      where: { id: doc.id },
+      data: { portalDownloadCount: { increment: 1 }, portalLastDownloadAt: new Date() },
+    })
+    return { url }
+  },
+
   async decideChangeOrder(args: {
     token: string
     projectId: string

@@ -83,7 +83,7 @@ Scope: full review of the Next.js app (8 modules, 45 API routes), hands-on testi
 3. ~~**Change orders & additional services** with client approval in the portal.~~ Done in Phase 4 (§9).
 4. ~~**Expenses & reimbursables** UI, billable markup, receipt upload (S3 is already wired).~~ Done in Phase 5 (§10).
 5. ~~**Bolivian e-invoicing (SIN)** and accounting export; BOB-first invoices.~~ Done in Phase 6 (§11), except live transmission to the SIAT, which needs the studio's SIN credentials.
-6. **Portal documents:** stored `url` is an S3 key, not a link — serve presigned GET URLs for approved documents.
+6. ~~**Portal documents:** stored `url` is an S3 key, not a link — serve presigned GET URLs for approved documents.~~ Done in Phase 7 (§12).
 7. **Data quality:** project `totalSpentUSD` should be derived from timesheets × cost rate + expenses rather than entered, so earned value and CPI are live.
 8. **Roles:** enforce role-based visibility of fees and margins (architects should not see firm-wide P&L).
 
@@ -178,4 +178,22 @@ Have an accountant review both layouts before filing.
 **Verified:** 499 unit and integration tests (including 24 for `lib/siat`, covering módulo 11, the CUF layout, Bolivian time, amounts in words up to millions with *veintiún*/*un* apocope, taxes and the QR URL, and 15 for `FiscalService`, covering issue, races, annulment, the RCV and a balanced journal), typecheck, lint, `next build`, and a 15-step Playwright run against seeded Postgres with zero console errors. The run covered: completing the studio's fiscal data; client NIT validation; a new invoice in Bs (Bs 69,600 → $10,000); issuing invoice N° 1 with a CUF, the buyer snapshot and draft → sent; the print page with legal text, amount in words, QR and watermark; the issued invoice refusing edits and deletion; issuing refused for a client without NIT; invoice N° 2 annulled with a SIN reason and its payment refused; a payment in Bs settling exactly; monthly IVA and IT; the RCV CSV with V/A rows; a balanced journal; an architect refused with 403 and shown read-only settings; and mobile with no horizontal scroll.
 
 **To go live with the SIN:** register the system with the SIN (*sistema propio*), obtain the delegated token, CUIS and digital signature, and implement CUFD retrieval plus XML signing and submission. The CUF and the QR are already in place.
+
+## 12. Phase 7: secure document downloads in the client portal
+
+**The bug:** the portal sent each approved document's `url` straight to the browser, but `url` is the S3 object key (`projects/<id>/documents/…`), not a link. Every download in the portal was broken, and the bucket layout leaked to the client.
+
+**Fix:** the portal payload no longer includes the storage key. It carries only id, filename, type, size, date and phase, and only for `APPROVED` documents. Each link points to `GET /api/portal/project/:id/documents/:docId?token=…`. That endpoint follows the ownership chain token → client → project → approved document in a single query, and redirects (302, `no-store`, `no-referrer`) to a **5-minute presigned S3 URL**:
+- PDFs and images open inline; CAD and other files download as attachments.
+- Filenames with accents survive (an ASCII fallback plus RFC 5987 UTF-8).
+
+Failures redirect back to the portal (`?doc=…#documentos`) with a message in Spanish instead of raw JSON. That covers a document that's pending, rejected, another client's or deleted (all reported as "not available", without revealing which documents exist), a revoked link, missing storage and the rate limit (30 per minute per IP; the portal limiter now takes a per-endpoint cap).
+
+**Portal UI:** documents are grouped by phase (EP/DD/DC/AO, then general), each with its type, size and date. A note explains that links are personal and expire.
+
+**Staff side:** each approved document shows "El cliente lo descargó N veces · última …" (`portalDownloadCount` and `portalLastDownloadAt`, counted only after a link is signed). Statuses read *Por aprobar / Visible al cliente / Rechazado* instead of raw enum values. Download errors are shown instead of being swallowed, and the new tab opens before the request so popup blockers don't interfere.
+
+**Storage not configured:** presigning and the staff upload and download now throw `STORAGE_UNAVAILABLE`, which maps to HTTP 503 with a clear message instead of a 500 (preview deployments have no S3).
+
+**Verified:** 508 unit and integration tests (6 new portal tests, plus 3 `lib/s3` tests that sign with dummy keys and check the exact key, the 300-second expiry, the inline/attachment disposition and the UTF-8 filename), typecheck, lint, `next build`, and a 13-step Playwright run with zero console errors. Because signing a URL is a local computation, the run used one server with dummy S3 keys and one with no S3. It covered: minting a portal link; no storage key in the payload; only approved documents listed, grouped and sized on mobile without horizontal scroll; a PDF giving a 302 to an inline 5-minute URL for the exact key; a CAD file as an attachment; pending, rejected and cross-client documents and a mismatched project going back with "notfound"; a bad token giving "auth"; no S3 giving "storage"; the banner in the portal; staff seeing the download counts and new labels; a staff upload without S3 returning 503; and the rate limit. The redirect target wasn't fetched (the keys are fake), so a real download against the production bucket still has to be tried.
 

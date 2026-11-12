@@ -20,6 +20,14 @@ interface Document {
   uploadedById: string
   uploadedBy: { id: string; name: string; avatarInitials: string }
   uploadedAt: string
+  portalDownloadCount: number
+  portalLastDownloadAt: string | null
+}
+
+const STATUS_LABEL: Record<Document['status'], string> = {
+  PENDING: 'Por aprobar',
+  APPROVED: 'Visible al cliente',
+  REJECTED: 'Rechazado',
 }
 
 interface DocumentListProps {
@@ -50,6 +58,7 @@ export function DocumentList({ projectId, currentUserId, currentUserRole }: Docu
   const [loading, setLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
   const [openDropdown, setOpenDropdown] = useState<string | null>(null)
 
   const isAdmin = currentUserRole === 'ADMIN'
@@ -75,14 +84,21 @@ export function DocumentList({ projectId, currentUserId, currentUserRole }: Docu
 
   async function handleDownload(doc: Document) {
     setDownloadingId(doc.id)
+    setActionError(null)
+    // Open the tab synchronously (popup blockers), then point it at the signed URL
+    const tab = window.open('', '_blank')
     try {
       const res = await fetch(`/api/documents/${doc.id}`)
       const json = await res.json()
       if (!json.success) throw new Error(json.error?.message)
       if (!json.data.downloadUrl) throw new Error('No download URL available')
-      window.open(json.data.downloadUrl, '_blank', 'noopener')
+      if (tab) {
+        tab.opener = null
+        tab.location.href = json.data.downloadUrl
+      } else window.location.href = json.data.downloadUrl
     } catch (err) {
-      console.error('Download error:', err)
+      tab?.close()
+      setActionError(err instanceof Error && err.message ? err.message : 'No se pudo descargar el documento')
     } finally {
       setDownloadingId(null)
     }
@@ -139,6 +155,10 @@ export function DocumentList({ projectId, currentUserId, currentUserRole }: Docu
         </button>
       </div>
 
+      {actionError && (
+        <p role="alert" className="text-xs text-red-300 rounded-md border border-red-900/60 bg-red-950/30 px-3 py-2">{actionError}</p>
+      )}
+
       {/* List */}
       <div className="space-y-1.5">
         {documents.map((doc) => (
@@ -160,10 +180,17 @@ export function DocumentList({ projectId, currentUserId, currentUserRole }: Docu
                 {' · '}
                 {formatDate(doc.uploadedAt)}
               </p>
+              {doc.status === 'APPROVED' && (
+                <p className="text-2xs font-mono text-g50 mt-0.5">
+                  {doc.portalDownloadCount > 0
+                    ? `El cliente lo descargó ${doc.portalDownloadCount} ${doc.portalDownloadCount === 1 ? 'vez' : 'veces'}${doc.portalLastDownloadAt ? ` · última ${formatDate(doc.portalLastDownloadAt)}` : ''}`
+                    : 'El cliente aún no lo descargó'}
+                </p>
+              )}
             </div>
 
             {/* Status badge */}
-            <Badge variant={statusVariant(doc.status)}>{doc.status}</Badge>
+            <Badge variant={statusVariant(doc.status)}>{STATUS_LABEL[doc.status]}</Badge>
 
             {/* Actions */}
             <div className="flex items-center gap-2 shrink-0">

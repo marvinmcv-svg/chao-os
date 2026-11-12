@@ -34,9 +34,31 @@ interface Invoice {
 interface Document {
   id: string
   filename: string
-  url: string
+  mimeType: string | null
+  sizeBytes: number | null
   uploadedAt: string
   phase: string | null
+}
+
+const DOC_ERRORS: Record<string, string> = {
+  notfound: 'Ese documento ya no está disponible. Pide a tu director de proyecto que lo vuelva a publicar.',
+  storage: 'Las descargas no están disponibles en este momento. Inténtalo más tarde o contacta al estudio.',
+  rate: 'Demasiadas descargas seguidas. Espera un minuto e inténtalo de nuevo.',
+  auth: 'Tu enlace de acceso ya no es válido. Solicita uno nuevo a tu director de proyecto.',
+  error: 'No se pudo descargar el documento. Inténtalo de nuevo.',
+}
+
+function fileSize(n: number | null) {
+  if (!n) return ''
+  if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} KB`
+  return `${(n / (1024 * 1024)).toFixed(1).replace('.', ',')} MB`
+}
+
+function fileKind(d: Document) {
+  const ext = d.filename.split('.').pop()?.toUpperCase() ?? ''
+  if (d.mimeType === 'application/pdf') return 'PDF'
+  if (d.mimeType?.startsWith('image/')) return ext || 'Imagen'
+  return ext || 'Archivo'
 }
 
 interface ProjectData {
@@ -131,6 +153,13 @@ export default function PortalProjectPage() {
 
   const { project, phases, milestones, invoices, documents, changeOrders, contract } = data
   const phaseLabels: Record<string, string> = { SD: 'EP', DD: 'DD', CD: 'DC', CA: 'AO' }
+  const docError = searchParams.get('doc')
+  // Group approved documents by phase (general ones last)
+  const docGroups = (['SD', 'DD', 'CD', 'CA', ''] as const)
+    .map((ph) => ({ ph, docs: documents.filter((d) => (d.phase ?? '') === ph) }))
+    .filter((g) => g.docs.length > 0)
+  const docHref = (d: Document) =>
+    `/api/portal/project/${encodeURIComponent(project.id)}/documents/${encodeURIComponent(d.id)}?token=${encodeURIComponent(token ?? '')}`
 
   return (
     <div className="space-y-8">
@@ -220,30 +249,48 @@ export default function PortalProjectPage() {
         </section>
       )}
 
-      {/* Documents */}
-      {documents.length > 0 && (
-        <section>
+      {/* Documents — approved only; each link resolves a 5-minute signed URL */}
+      {(documents.length > 0 || docError) && (
+        <section id="documentos" className="scroll-mt-6">
           <h2 className="font-mono text-sm text-g40 uppercase tracking-wider mb-4">Documentos</h2>
-          <div className="space-y-2">
-            {documents.map(doc => (
-              <a
-                key={doc.id}
-                href={doc.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center justify-between p-3 border border-g80 bg-g85 rounded-lg hover:border-g70 transition-colors"
-              >
-                <div className="flex items-center gap-3">
-                  <FileText className="w-5 h-5 text-g40" />
-                  <div>
-                    <p className="text-sm font-medium text-g10">{doc.filename}</p>
-                    {doc.phase && <p className="text-xs text-g40">Fase {phaseLabels[doc.phase] || doc.phase}</p>}
-                  </div>
+          {docError && (
+            <p role="alert" className="mb-3 flex gap-2 text-sm text-yellow-200/90 rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-3">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              {DOC_ERRORS[docError] ?? DOC_ERRORS.error}
+            </p>
+          )}
+          <div className="space-y-5">
+            {docGroups.map(({ ph, docs }) => (
+              <div key={ph || 'general'}>
+                <p className="text-2xs font-mono text-g50 uppercase tracking-wider mb-2">
+                  {ph ? `${phaseLabels[ph]} · ${PHASE[ph]?.label ?? ph}` : 'Generales'}
+                </p>
+                <div className="space-y-2">
+                  {docs.map((doc) => (
+                    <a
+                      key={doc.id}
+                      href={docHref(doc)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between gap-3 p-3 border border-g80 bg-g85 rounded-lg hover:border-g70 transition-colors"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <FileText className="w-5 h-5 text-g40 flex-shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-g10 truncate">{doc.filename}</p>
+                          <p className="text-xs text-g40 font-mono">
+                            {[fileKind(doc), fileSize(doc.sizeBytes), new Date(doc.uploadedAt).toLocaleDateString('es-BO')].filter(Boolean).join(' · ')}
+                          </p>
+                        </div>
+                      </div>
+                      <Download className="w-4 h-4 text-g40 flex-shrink-0" aria-label="Descargar" />
+                    </a>
+                  ))}
                 </div>
-                <Download className="w-4 h-4 text-g40" />
-              </a>
+              </div>
             ))}
           </div>
+          {documents.length > 0 && <p className="text-2xs text-g50 mt-3">Los enlaces de descarga son personales y caducan a los pocos minutos.</p>}
         </section>
       )}
 

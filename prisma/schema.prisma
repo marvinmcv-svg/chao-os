@@ -725,18 +725,21 @@ model ExpenseReceipt {
 // ---------------------------------------------------------------------------
 
 model Document {
-  id           String         @id @default(cuid())
-  projectId    String
-  project      Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  phase        ProjectPhase?
-  filename     String
-  url          String
-  mimeType     String?
-  sizeBytes    Int?
-  status       DocumentStatus @default(PENDING)
-  uploadedById String
-  uploadedBy   User           @relation(fields: [uploadedById], references: [id])
-  uploadedAt   DateTime       @default(now())
+  id                   String         @id @default(cuid())
+  projectId            String
+  project              Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phase                ProjectPhase?
+  filename             String
+  url                  String
+  mimeType             String?
+  sizeBytes            Int?
+  status               DocumentStatus @default(PENDING)
+  uploadedById         String
+  uploadedBy           User           @relation(fields: [uploadedById], references: [id])
+  uploadedAt           DateTime       @default(now())
+  /// Client downloads from the portal (staff see whether the client opened it)
+  portalDownloadCount  Int            @default(0)
+  portalLastDownloadAt DateTime?
 
   @@index([projectId])
 }

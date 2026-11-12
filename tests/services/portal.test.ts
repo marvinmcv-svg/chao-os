@@ -14,6 +14,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const mockClientFindFirst = vi.fn()
 const mockClientUpdate = vi.fn()
 const mockProjectFindFirst = vi.fn()
+const mockDocumentFindFirst = vi.fn()
+const mockDocumentUpdate = vi.fn()
+const mockPresign = vi.fn()
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
@@ -24,8 +27,22 @@ vi.mock('@/lib/prisma', () => ({
     project: {
       findFirst: (...args: unknown[]) => mockProjectFindFirst(...args),
     },
+    document: {
+      findFirst: (...args: unknown[]) => mockDocumentFindFirst(...args),
+      update: (...args: unknown[]) => mockDocumentUpdate(...args),
+    },
   },
 }))
+
+vi.mock('@/lib/s3', async () => {
+  const { DomainError } = await import('@/lib/result')
+  class StorageUnavailableError extends DomainError {
+    constructor() {
+      super('STORAGE_UNAVAILABLE', 'no storage')
+    }
+  }
+  return { getPresignedViewUrl: (...args: unknown[]) => mockPresign(...args), StorageUnavailableError }
+})
 
 import { PortalService } from '@/services/PortalService'
 import { UnauthorizedError } from '@/lib/require-auth'
@@ -214,3 +231,67 @@ describe('PortalService.decideChangeOrder', () => {
     ).rejects.toThrow(UnauthorizedError)
   })
 })
+
+describe('PortalService.getDocumentDownload', () => {
+  const DOC = { id: 'd1', url: 'projects/p1/documents/abc-plano.pdf', filename: 'Planta N8 (DD).pdf', mimeType: 'application/pdf' }
+
+  it('resolves only APPROVED documents of the token client\'s project and counts the download', async () => {
+    mockClientFindFirst.mockResolvedValueOnce({ id: 'c1', name: 'Ana' })
+    mockDocumentFindFirst.mockResolvedValueOnce(DOC)
+    mockPresign.mockResolvedValueOnce('https://bucket.s3/signed?X-Amz-Expires=300')
+    const r = await PortalService.getDocumentDownload({ token: 'good', projectId: 'p1', documentId: 'd1' })
+    expect(r).toEqual({ url: 'https://bucket.s3/signed?X-Amz-Expires=300' })
+    // Ownership is enforced in the query: token client → project → approved doc
+    expect(mockDocumentFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'd1', projectId: 'p1', status: 'APPROVED', project: { clientId: 'c1' } } })
+    )
+    expect(mockPresign).toHaveBeenCalledWith(DOC.url, DOC.filename, 'application/pdf', { disposition: 'inline' })
+    expect(mockDocumentUpdate).toHaveBeenCalledWith({
+      where: { id: 'd1' },
+      data: { portalDownloadCount: { increment: 1 }, portalLastDownloadAt: expect.any(Date) },
+    })
+  })
+
+  it('CAD and other files download as attachments', async () => {
+    mockClientFindFirst.mockResolvedValueOnce({ id: 'c1', name: 'Ana' })
+    mockDocumentFindFirst.mockResolvedValueOnce({ ...DOC, filename: 'Fachada.dwg', mimeType: 'application/octet-stream' })
+    mockPresign.mockResolvedValueOnce('https://signed')
+    await PortalService.getDocumentDownload({ token: 'good', projectId: 'p1', documentId: 'd1' })
+    expect(mockPresign.mock.calls[0][3]).toEqual({ disposition: 'attachment' })
+  })
+
+  it('404 for documents that are not approved or not this client\'s (no counter bump)', async () => {
+    mockClientFindFirst.mockResolvedValueOnce({ id: 'c1', name: 'Ana' })
+    mockDocumentFindFirst.mockResolvedValueOnce(null)
+    await expect(PortalService.getDocumentDownload({ token: 'good', projectId: 'p1', documentId: 'other' })).rejects.toThrow(NotFoundError)
+    expect(mockPresign).not.toHaveBeenCalled()
+    expect(mockDocumentUpdate).not.toHaveBeenCalled()
+  })
+
+  it('401 for a bad or disabled token before any document lookup', async () => {
+    mockClientFindFirst.mockResolvedValueOnce(null)
+    await expect(PortalService.getDocumentDownload({ token: 'bad', projectId: 'p1', documentId: 'd1' })).rejects.toThrow(UnauthorizedError)
+    await expect(PortalService.getDocumentDownload({ token: undefined, projectId: 'p1', documentId: 'd1' })).rejects.toThrow(UnauthorizedError)
+    expect(mockDocumentFindFirst).not.toHaveBeenCalled()
+  })
+
+  it('storage not configured surfaces as STORAGE_UNAVAILABLE and does not count', async () => {
+    const { StorageUnavailableError } = await import('@/lib/s3')
+    mockClientFindFirst.mockResolvedValueOnce({ id: 'c1', name: 'Ana' })
+    mockDocumentFindFirst.mockResolvedValueOnce(DOC)
+    mockPresign.mockRejectedValueOnce(new StorageUnavailableError())
+    await expect(PortalService.getDocumentDownload({ token: 'good', projectId: 'p1', documentId: 'd1' })).rejects.toMatchObject({ code: 'STORAGE_UNAVAILABLE' })
+    expect(mockDocumentUpdate).not.toHaveBeenCalled()
+  })
+
+  it('the project payload selects documents without the storage key', async () => {
+    mockClientFindFirst.mockResolvedValueOnce({ id: 'c1' })
+    mockProjectFindFirst.mockResolvedValueOnce(null)
+    await expect(PortalService.getProjectForClient({ token: 'good', projectId: 'p1' })).rejects.toThrow(NotFoundError)
+    const q = mockProjectFindFirst.mock.calls[0][0]
+    expect(q.include.documents.where).toEqual({ status: 'APPROVED' })
+    expect(q.include.documents.select).not.toHaveProperty('url')
+    expect(q.include.documents.select).toMatchObject({ mimeType: true, sizeBytes: true })
+  })
+})
+

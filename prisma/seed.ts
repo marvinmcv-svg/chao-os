@@ -1121,6 +1121,22 @@ async function main() {
   console.log(`✅ Created ${notifications.length} notifications`)
 
   // =========================================================================
+  // SAMPLE DOCUMENTS (S3 keys; approved ones are visible in the client portal)
+  // =========================================================================
+  const docKey = (p: { id: string }, name: string) => `projects/${p.id}/documents/seed-${name}`
+  await prisma.document.createMany({
+    data: [
+      { projectId: projects[0].id, phase: ProjectPhase.DD, filename: 'Planta tipo - Nivel 8 (DD).pdf', url: docKey(projects[0], 'planta-n8.pdf'), mimeType: 'application/pdf', sizeBytes: 2_480_000, status: DocumentStatus.APPROVED, uploadedById: marcoUser.id },
+      { projectId: projects[0].id, phase: ProjectPhase.CD, filename: 'Fachada principal.dwg', url: docKey(projects[0], 'fachada.dwg'), mimeType: 'application/octet-stream', sizeBytes: 5_900_000, status: DocumentStatus.APPROVED, uploadedById: sofiaUser.id },
+      { projectId: projects[0].id, phase: null, filename: 'Memoria descriptiva.pdf', url: docKey(projects[0], 'memoria.pdf'), mimeType: 'application/pdf', sizeBytes: 640_000, status: DocumentStatus.APPROVED, uploadedById: marcoUser.id },
+      { projectId: projects[0].id, phase: ProjectPhase.CD, filename: 'Detalles de escalera (borrador).pdf', url: docKey(projects[0], 'escalera.pdf'), mimeType: 'application/pdf', sizeBytes: 900_000, status: DocumentStatus.PENDING, uploadedById: jorgeUser.id },
+      { projectId: projects[0].id, phase: ProjectPhase.DD, filename: 'Corte A-A (versión anterior).pdf', url: docKey(projects[0], 'corte-old.pdf'), mimeType: 'application/pdf', sizeBytes: 700_000, status: DocumentStatus.REJECTED, uploadedById: jorgeUser.id },
+      { projectId: projects[1].id, phase: ProjectPhase.SD, filename: 'Esquema funcional - Clínica.pdf', url: docKey(projects[1], 'esquema.pdf'), mimeType: 'application/pdf', sizeBytes: 1_200_000, status: DocumentStatus.APPROVED, uploadedById: sofiaUser.id },
+    ],
+  })
+  console.log('✅ Created 6 documents')
+
+  // =========================================================================
   // SAMPLE EXPENSES
   // =========================================================================
   // One of each workflow state: approved + rebilled with markup, submitted

@@ -6,6 +6,15 @@ import {
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
+import { DomainError } from './result'
+
+/** S3 env vars missing: a configuration problem, surfaced as 503 instead of a crash. */
+export class StorageUnavailableError extends DomainError {
+  constructor() {
+    super('STORAGE_UNAVAILABLE', 'El almacenamiento de archivos no está configurado. Contacta a la administración del estudio.')
+  }
+}
+
 // ── Config ────────────────────────────────────────────────────────────────────
 
 function getRegion() { return process.env.AWS_REGION ?? '' }
@@ -60,6 +69,7 @@ export async function getPresignedUploadUrl(
   projectId: string,
   cuid: string
 ): Promise<PresignedUploadResult> {
+  if (!isS3Configured()) throw new StorageUnavailableError()
   const fileKey = buildFileKey(projectId, filename, cuid)
   const bucket = requireEnv('DOCUMENTS_S3_BUCKET', getBucket())
   const client = getS3Client()
@@ -87,6 +97,7 @@ export interface PresignedDownloadResult {
 }
 
 export async function getPresignedDownloadUrl(fileKey: string): Promise<PresignedDownloadResult> {
+  if (!isS3Configured()) throw new StorageUnavailableError()
   const bucket = requireEnv('DOCUMENTS_S3_BUCKET', getBucket())
   const client = getS3Client()
 
@@ -134,14 +145,25 @@ export async function putObject(fileKey: string, body: Uint8Array, mimeType: str
   )
 }
 
-/** Short-lived (5 min) download link that opens inline in the browser. */
-export async function getPresignedViewUrl(fileKey: string, filename: string, mimeType: string): Promise<string> {
-  const bucket = requireEnv('DOCUMENTS_S3_BUCKET', getBucket())
+/**
+ * Short-lived (5 min by default) download link. `inline` opens PDFs/images
+ * in the browser; `attachment` forces a download (CAD files). The filename
+ * is sent ASCII-safe plus RFC 5987 UTF-8 so accents survive.
+ */
+export async function getPresignedViewUrl(
+  fileKey: string,
+  filename: string,
+  mimeType: string,
+  opts: { disposition?: 'inline' | 'attachment'; expiresIn?: number } = {}
+): Promise<string> {
+  if (!isS3Configured()) throw new StorageUnavailableError()
+  const bucket = getBucket()
+  const ascii = filename.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w.\- ]/g, '_')
   const command = new GetObjectCommand({
     Bucket: bucket,
     Key: fileKey,
-    ResponseContentType: mimeType,
-    ResponseContentDisposition: `inline; filename="${filename.replace(/[^\w.\- ]/g, '_')}"`,
+    ResponseContentType: mimeType || 'application/octet-stream',
+    ResponseContentDisposition: `${opts.disposition ?? 'inline'}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
   })
-  return getSignedUrl(getS3Client(), command, { expiresIn: 5 * 60 })
+  return getSignedUrl(getS3Client(), command, { expiresIn: opts.expiresIn ?? 5 * 60 })
 }
