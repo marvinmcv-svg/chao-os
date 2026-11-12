@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { withApiHandler } from '@/lib/api-handler'
 import { requireAuth } from '@/lib/require-auth'
 import { prisma } from '@/lib/prisma'
+import { entryCost } from '@/services/CostService'
 
 // GET /api/finance/pnl — P&L per project (revenue - expenses - time cost)
 export const GET = withApiHandler(async (req: NextRequest) => {
@@ -23,14 +24,11 @@ export const GET = withApiHandler(async (req: NextRequest) => {
       // Only approved costs count; submitted/rejected ones are not real spend yet
       expenses: { where: { status: { in: ['APPROVED', 'REIMBURSED'] } }, select: { amountUSD: true } },
       timeEntries: {
-        select: { hours: true, user: { select: { teamMember: { select: { hourlyRate: true } } } } },
+        select: { hours: true, costRateUSD: true, user: { select: { teamMember: { select: { hourlyRate: true } } } } },
       },
       teamMembers: true,
     },
   })
-
-  // Default hourly rate if not set
-  const DEFAULT_HOURLY_RATE = Number(process.env.DEFAULT_HOURLY_RATE) || 50
 
   const pnlData = projects.map(project => {
     // Revenue = everything invoiced (not drafts)
@@ -39,7 +37,8 @@ export const GET = withApiHandler(async (req: NextRequest) => {
     const hoursLogged = project.timeEntries.reduce((sum, t) => sum + t.hours, 0)
     // Labor cost: each entry at the member's own cost rate, or the default
     const laborCost = project.timeEntries.reduce(
-      (sum, t) => sum + t.hours * (t.user.teamMember?.hourlyRate ?? DEFAULT_HOURLY_RATE),
+      // Same rule as CostService: rate snapshotted on the entry, else member rate, else default
+      (sum, t) => sum + entryCost({ hours: t.hours, costRateUSD: t.costRateUSD, memberRate: t.user.teamMember?.hourlyRate }),
       0,
     )
     const netProfit = revenue - expenses - laborCost

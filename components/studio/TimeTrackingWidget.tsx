@@ -15,6 +15,7 @@ interface Project {
   code: string
   name: string
   status: string
+  currentPhase?: string
   phases: { id: string; phase: string; label: string; status: string }[]
 }
 
@@ -138,7 +139,12 @@ export function TimeTrackingWidget({ onClose, onEntryAdded }: Props) {
         <Select
           label="Proyecto"
           value={projectId}
-          onChange={(e) => { setProjectId(e.target.value); setPhaseId('') }}
+          onChange={(e) => {
+            setProjectId(e.target.value)
+            // Default to the project's current phase so hours feed that phase's cost
+            const p = projects.find((x) => x.id === e.target.value)
+            setPhaseId(p?.phases.find((ph) => ph.phase === p.currentPhase)?.id ?? '')
+          }}
           options={[{ value: '', label: 'Seleccionar proyecto…' }, ...projects.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` }))]}
         />
 

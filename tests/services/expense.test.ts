@@ -33,12 +33,14 @@ vi.mock('@/lib/s3', () => ({
 }))
 vi.mock('@/services/InvoiceService', () => ({ InvoiceService: { create: vi.fn() } }))
 vi.mock('@/services/NotificationService', () => ({ NotificationService: { create: vi.fn() } }))
+vi.mock('@/services/CostService', () => ({ CostService: { refresh: vi.fn() } }))
 
 import { prisma } from '@/lib/prisma'
 import * as s3 from '@/lib/s3'
 import { ExpenseService, expenseInputSchema, summarize, billedAmount, toUSD } from '@/services/ExpenseService'
 import { InvoiceService } from '@/services/InvoiceService'
 import { NotificationService } from '@/services/NotificationService'
+import { CostService } from '@/services/CostService'
 import { DomainError, ForbiddenError, InvalidStateError, NotFoundError } from '@/lib/result'
 
 const db = prisma as unknown as Record<string, Record<string, ReturnType<typeof vi.fn>>>
@@ -138,6 +140,7 @@ describe('input schema', () => {
 describe('create', () => {
   it('a team member’s expense is SUBMITTED and notifies the PM', async () => {
     await ExpenseService.create({ currentUser: ARCH, projectId: 'p1', data: input() })
+    expect(CostService.refresh).not.toHaveBeenCalled() // not a cost until approved
     const data = db.expense.create.mock.calls[0][0].data
     expect(data.status).toBe('SUBMITTED')
     expect(data.submittedById).toBe('u_arch')
@@ -179,6 +182,8 @@ describe('approve / reject / reimburse', () => {
       expect.objectContaining({ where: { id: 'e1', status: 'SUBMITTED' }, data: expect.objectContaining({ status: 'APPROVED', reviewedById: 'u_pm' }) })
     )
     expect(NotificationService.create).toHaveBeenCalledWith(expect.objectContaining({ userId: 'u_arch', type: 'EXPENSE_DECIDED', title: 'Gasto aprobado' }))
+    // approval changes project cost
+    expect(CostService.refresh).toHaveBeenCalledWith('p1')
   })
 
   it('reject stores the reason', async () => {

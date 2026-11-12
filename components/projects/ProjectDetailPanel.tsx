@@ -15,6 +15,7 @@ import { cn, formatCompact, formatCurrency, formatDate } from '@/lib/utils'
 import { DocumentUpload } from './DocumentUpload'
 import { DocumentList } from './DocumentList'
 import { ChangeOrdersSection } from './ChangeOrdersSection'
+import { CostBreakdown } from './CostBreakdown'
 import { ExpensesSection } from '@/components/expenses/ExpensesSection'
 
 interface ProjectDetail {
@@ -226,6 +227,15 @@ export function ProjectDetailPanel({ projectId, open, onClose, onUpdate }: Props
               })}
             </div>
           </Section>
+
+          <CostBreakdown
+            projectId={project.id}
+            version={project.totalSpentUSD}
+            onChanged={() => {
+              fetchProject()
+              onUpdate()
+            }}
+          />
 
           <ChangeOrdersSection
             projectId={project.id}

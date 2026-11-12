@@ -5,7 +5,8 @@
 #     refuses changes that would drop data)
 #  3. Seed demo data ONLY when the database has no users yet — redeploys
 #     never wipe real data
-#  4. next build
+#  4. Recompute derived project costs (timesheets × rate + expenses)
+#  5. next build
 set -euo pipefail
 
 if [ -z "${DATABASE_URL:-}" ]; then
@@ -26,6 +27,9 @@ if [ -n "$MIGRATE_URL" ]; then
   else
     echo "▶ Database has $USERS users — skipping seed"
   fi
+  # Derived project cost (idempotent). Never blocks a deploy: the next
+  # timesheet/expense change or deploy recomputes again.
+  DATABASE_URL="$MIGRATE_URL" npx tsx scripts/recompute-costs.ts || echo "⚠ Cost backfill failed — continuing"
 else
   echo "⚠ No database URL configured — skipping schema sync"
 fi

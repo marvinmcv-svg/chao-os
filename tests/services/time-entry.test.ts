@@ -21,10 +21,15 @@ vi.mock('@/lib/time-util', () => ({
   recalculateTeamUtilization: vi.fn(),
 }))
 
+vi.mock('@/services/CostService', () => ({
+  CostService: { rateFor: vi.fn(() => Promise.resolve(42)), refresh: vi.fn() },
+}))
+
 import { prisma } from '@/lib/prisma'
 import { recalculateTeamUtilization } from '@/lib/time-util'
 import { TimeEntryService } from '@/services/TimeEntryService'
 import { ForbiddenError, NotFoundError } from '@/lib/result'
+import { CostService } from '@/services/CostService'
 
 const mockPrisma = prisma as unknown as {
   timeEntry: {
@@ -144,10 +149,14 @@ describe('TimeEntryService.create', () => {
           userId: 'user_1',
           projectId: 'proj_1',
           hours: 2.5,
+          // cost rate snapshotted at logging time
+          costRateUSD: 42,
           date: new Date('2026-06-12T00:00:00.000Z'),
         }),
       }),
     )
+    expect(CostService.rateFor).toHaveBeenCalledWith('user_1')
+    expect(CostService.refresh).toHaveBeenCalledWith('proj_1')
     expect(mockPrisma.auditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -207,6 +216,7 @@ describe('TimeEntryService.delete', () => {
 
     expect(mockPrisma.timeEntry.delete).toHaveBeenCalledWith({ where: { id: 'te_1' } })
     expect(mockRecalc).toHaveBeenCalledWith('user_1')
+    expect(CostService.refresh).toHaveBeenCalledWith(entry.projectId)
     expect(mockPrisma.auditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ action: 'DELETE', entityType: 'TimeEntry' }),

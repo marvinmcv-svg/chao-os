@@ -321,7 +321,15 @@ model Project {
   contractType           ContractType
   currentPhase           ProjectPhase  @default(SD)
   totalBudgetUSD         Float
+  /// Derived (CostService): phase openings + unphased opening + labor + approved expenses
   totalSpentUSD          Float         @default(0)
+  /// Opening cost not attributed to a phase
+  openingSpentUSD        Float         @default(0)
+  laborCostUSD           Float         @default(0)
+  laborHours             Float         @default(0)
+  expenseCostUSD         Float         @default(0)
+  /// Last cost recompute; null = manual figures not yet migrated to derived costs
+  costsDerivedAt         DateTime?
   overallProgressPercent Int           @default(0)
   status                 ProjectStatus @default(ON_TRACK)
   startDate              DateTime
@@ -353,7 +361,12 @@ model Phase {
   phase           ProjectPhase
   label           String
   budgetUSD       Float
+  /// Derived (CostService): openingSpentUSD + laborCostUSD + expenseCostUSD
   spentUSD        Float        @default(0)
+  /// Cost incurred before CHAO OS tracked it (editable by principals/admins)
+  openingSpentUSD Float        @default(0)
+  laborCostUSD    Float        @default(0)
+  expenseCostUSD  Float        @default(0)
   progressPercent Int          @default(0)
   status          PhaseStatus  @default(NOT_STARTED)
   startDate       DateTime?
@@ -652,6 +665,8 @@ model TimeEntry {
   task        Task?    @relation(fields: [taskId], references: [id])
   description String
   hours       Float
+  /// Cost rate (USD/h) snapshotted when logged, so later rate changes don't rewrite history
+  costRateUSD Float?
   date        DateTime
   createdAt   DateTime @default(now())
 

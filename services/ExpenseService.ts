@@ -30,6 +30,7 @@ import { DomainError, ForbiddenError, InvalidStateError, NotFoundError, Validati
 import { buildReceiptKey, deleteObject, getPresignedViewUrl, isS3Configured, putObject } from '@/lib/s3'
 import { InvoiceService } from './InvoiceService'
 import { NotificationService } from './NotificationService'
+import { CostService } from './CostService'
 
 /** Firm-wide approvers. The project's PM can also approve that project's expenses. */
 export const EXPENSE_APPROVER_ROLES = new Set(['PRINCIPAL', 'ADMIN'])
@@ -228,6 +229,7 @@ export const ExpenseService = {
       include: LIST_INCLUDE,
     })
     await audit(user.id, 'CREATE', row.id, { amountUSD: row.amountUSD, status: row.status })
+    if (row.status === 'APPROVED') await CostService.refresh(project.id)
     if (!autoApprove && project.projectManagerId !== user.id) {
       await NotificationService.create({
         userId: project.projectManagerId,
@@ -278,6 +280,7 @@ export const ExpenseService = {
     })
     if (r.count === 0) throw new InvalidStateError('El gasto cambió mientras lo editabas; recarga')
     await audit(user.id, 'UPDATE', e.id, { amountUSD: toUSD(data.amount, data.currency, data.exchangeRate) })
+    await CostService.refresh(e.projectId)
     return dto(await this.load(e.id))
   },
 
@@ -295,6 +298,7 @@ export const ExpenseService = {
       await deleteObject(e.receiptKey).catch((err) => console.warn('[expenses] receipt delete failed', err))
     }
     await audit(user.id, 'DELETE', e.id, { amountUSD: e.amountUSD, description: e.description })
+    await CostService.refresh(e.projectId)
     return { id: e.id }
   },
 
@@ -349,6 +353,7 @@ export const ExpenseService = {
       }
     }
     await audit(user.id, 'UPDATE', e.id, { action: input.action })
+    if (input.action === 'approve') await CostService.refresh(e.projectId)
     return dto(await this.load(e.id))
   },
 

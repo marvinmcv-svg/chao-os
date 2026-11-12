@@ -30,6 +30,7 @@
  */
 import type { z } from 'zod'
 import type { CreateTimeEntrySchema } from '@/lib/validations'
+import { CostService } from './CostService'
 import { prisma } from '@/lib/prisma'
 import type { AuthUser } from '@/lib/auth'
 import { recalculateTeamUtilization } from '@/lib/time-util'
@@ -97,6 +98,8 @@ export const TimeEntryService = {
         taskId: data.taskId,
         description: data.description,
         hours: data.hours,
+        // Snapshot the cost rate: later rate changes don't rewrite history
+        costRateUSD: await CostService.rateFor(currentUser.id),
         date: new Date(data.date),
       },
       include: {
@@ -114,6 +117,7 @@ export const TimeEntryService = {
     }
 
     await recalculateTeamUtilization(currentUser.id)
+    await CostService.refresh(entry.projectId)
 
     await prisma.auditLog.create({
       data: {
@@ -154,6 +158,7 @@ export const TimeEntryService = {
     }
 
     await recalculateTeamUtilization(entry.userId)
+    await CostService.refresh(entry.projectId)
 
     await prisma.auditLog.create({
       data: {

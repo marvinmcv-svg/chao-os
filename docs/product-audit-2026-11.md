@@ -84,7 +84,7 @@ Scope: full review of the Next.js app (8 modules, 45 API routes), hands-on testi
 4. ~~**Expenses & reimbursables** UI, billable markup, receipt upload (S3 is already wired).~~ Done in Phase 5 (§10).
 5. ~~**Bolivian e-invoicing (SIN)** and accounting export; BOB-first invoices.~~ Done in Phase 6 (§11), except live transmission to the SIAT, which needs the studio's SIN credentials.
 6. ~~**Portal documents:** stored `url` is an S3 key, not a link — serve presigned GET URLs for approved documents.~~ Done in Phase 7 (§12).
-7. **Data quality:** project `totalSpentUSD` should be derived from timesheets × cost rate + expenses rather than entered, so earned value and CPI are live.
+7. ~~**Data quality:** project `totalSpentUSD` should be derived from timesheets × cost rate + expenses rather than entered, so earned value and CPI are live.~~ Done in Phase 8 (§13).
 8. **Roles:** enforce role-based visibility of fees and margins (architects should not see firm-wide P&L).
 
 ## 6. How this was verified
@@ -196,4 +196,37 @@ Failures redirect back to the portal (`?doc=…#documentos`) with a message in S
 **Storage not configured:** presigning and the staff upload and download now throw `STORAGE_UNAVAILABLE`, which maps to HTTP 503 with a clear message instead of a 500 (preview deployments have no S3).
 
 **Verified:** 508 unit and integration tests (6 new portal tests, plus 3 `lib/s3` tests that sign with dummy keys and check the exact key, the 300-second expiry, the inline/attachment disposition and the UTF-8 filename), typecheck, lint, `next build`, and a 13-step Playwright run with zero console errors. Because signing a URL is a local computation, the run used one server with dummy S3 keys and one with no S3. It covered: minting a portal link; no storage key in the payload; only approved documents listed, grouped and sized on mobile without horizontal scroll; a PDF giving a 302 to an inline 5-minute URL for the exact key; a CAD file as an attachment; pending, rejected and cross-client documents and a mismatched project going back with "notfound"; a bad token giving "auth"; no S3 giving "storage"; the banner in the portal; staff seeing the download counts and new labels; a staff upload without S3 returning 503; and the rate limit. The redirect target wasn't fetched (the keys are fake), so a real download against the production bucket still has to be tried.
+
+## 13. Phase 8: project cost derived from timesheets and expenses
+
+**Before:** `Project.totalSpentUSD` and `Phase.spentUSD` were typed in once (by the seed) and never changed. So "Consumido", earned value, CPI, the budget alerts on the dashboard and the AI context all ran on static numbers.
+
+**Now** (`CostService`): spend = **labour** + **approved expenses** + **opening balance**.
+- **Labour** is hours × the cost rate **snapshotted on each time entry** when it's logged (`TimeEntry.costRateUSD`), so raising someone's rate never rewrites past cost. Entries without a snapshot fall back to the member's current rate, then `DEFAULT_HOURLY_RATE`.
+- **Approved expenses** are those `APPROVED` or `REIMBURSED`. Submitted and rejected ones don't count.
+- **Opening balance** is cost incurred before CHAO OS tracked it, per phase plus an unphased remainder. Principals and admins edit it in the project drawer (*Costo real → Saldos iniciales*, `PUT /api/projects/:id/costs`).
+
+Costs without a phase count toward the project total only and appear as "Sin fase". The studio timer now defaults to the project's current phase, so new hours feed that phase's cost.
+
+**When it updates:** after a time entry is created or deleted, and after an expense is approved, edited or deleted. Each recompute locks the project row (`SELECT … FOR UPDATE`), so concurrent changes can't write a stale total. A recompute failure never fails the user's request: it's logged, and the next change or deploy fixes it. Each recompute stores labour, labour hours, expenses and openings on the project and its phases, so all 11 existing readers of `totalSpentUSD`/`spentUSD` became live without code changes. P&L uses the same snapshot-rate rule, and its labour matches the derived figure.
+
+**Cutover without a jump:** `scripts/recompute-costs.ts` runs in the Vercel build after the schema sync. It's idempotent and can't block a deploy. It snapshots rates on legacy entries at the member's current rate, then recomputes every project. On a project's first recompute:
+- The opening total is the old manual total minus tracked costs (never below zero).
+- Each phase's opening is its old figure minus its own tracked cost, scaled down proportionally if the phase openings exceed the opening total.
+- The remainder is the unphased opening.
+
+Totals stay identical at cutover. Against the seed, all 7 projects were unchanged, and a second run migrated nothing. The exception is when tracked costs already exceed the old figure: then the total rises to the tracked cost, because that's real spend.
+
+**Verified:** 520 unit and integration tests (12 new for `CostService`, covering the rate fallback, the phase/unphased roll-up, cutover cases (identical total, scaling, remainder, tracked above manual, new project), the row lock, the approved-only filter, the backfill, the non-throwing refresh and admin-only openings; plus assertions that time entries snapshot their rate and that time entries and approved expenses trigger a recompute), typecheck, lint, `next build`, and a 12-step Playwright run against seeded Postgres after the same backfill the deploy runs. Zero console errors. The run covered:
+- the cutover keeping $178,760
+- the drawer breakdown
+- 10 h in DD adding exactly 10 × $28 to DD and the project
+- a rate change leaving past cost alone while new hours use the new rate
+- a submitted expense not counting until the PM approved it
+- deleting an entry removing its cost
+- an admin editing the EP opening in the UI with the total following
+- an architect getting 403 and no edit button
+- P&L labour equal to the derived labour
+- the project list showing the live total
+- mobile with no horizontal scroll
 
